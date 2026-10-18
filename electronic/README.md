@@ -1,20 +1,20 @@
-# Electronics
+# Elektronika
 
-Document the actual, verified wiring here. Do not infer connector pinouts from software constants.
+Catat pengkabelan yang benar-benar terpasang dan terverifikasi di sini. Jangan menyimpulkan pinout konektor dari konstanta di software.
 
-## Required blocks
+## Blok yang diperlukan
 
-- Jetson Orin Nano + carrier and camera(s)
-- Body MCU: project decision is STM32F401/F411 Blackpill (verify exact board before assigning pins)
-- Motor/ESC and steering servo
-- Battery, regulators, grounds, fusing, and power distribution
-- Separate physical start and easily reachable emergency-stop controls
+- Jetson Orin Nano + carrier dan kamera
+- MCU bodi: keputusan proyek adalah STM32F401/F411 Blackpill (verifikasi board persisnya sebelum menetapkan pin)
+- Motor/ESC dan servo kemudi
+- Baterai, regulator, ground, sekring, dan distribusi daya
+- Tombol start dan emergency-stop fisik yang terpisah dan mudah dijangkau
 
-## Safety interface requirements
+## Persyaratan antarmuka keselamatan
 
-- E-stop must inhibit propulsion independently of Jetson software and remain latched until deliberate reset.
-- MCU defaults to motor disabled at reset and on stale/invalid Jetson setpoints.
-- Start is accepted only when e-stop is released and the system is ready; after an e-stop, require a fresh start action.
-- No wired or wireless communications during an attempt.
+- E-stop harus memutus penggerak secara independen dari software Jetson dan tetap terkunci sampai direset dengan sengaja.
+- MCU berdefault ke motor mati saat reset dan saat setpoint dari Jetson basi atau tidak valid.
+- Start hanya diterima jika e-stop tidak aktif dan sistem siap; setelah e-stop, wajib ada aksi start baru.
+- Tidak ada komunikasi kabel maupun nirkabel selama satu percobaan.
 
-Pin map, schematic, wire gauges, fuse values, voltage/current ratings, and measured tests are intentionally blank until the real components and wiring are confirmed.
+Pin map, skematik, ukuran kawat, nilai sekring, rating tegangan/arus, dan hasil pengukuran sengaja dibiarkan kosong sampai komponen dan pengkabelan nyata dikonfirmasi.

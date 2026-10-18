@@ -1,14 +1,14 @@
-# Mechanical
+# Mekanikal
 
-Store chassis CAD, drawings, and verified assembly notes here. The current project direction is a side-plate FRP chassis, rear-wheel drive through one open differential, and Ackermann front steering.
+Simpan CAD sasis, gambar kerja, dan catatan perakitan yang sudah terverifikasi di sini. Arah proyek saat ini: sasis FRP side-plate, penggerak roda belakang melalui satu differential terbuka, dan kemudi depan Ackermann.
 
-## Design constraints to check
+## Batasan desain yang perlu dicek
 
-- Competition limits: track width 130–350 mm; wheelbase 160–550 mm; overall width ≤400 mm; length ≤600 mm; height ≤450 mm.
-- Required mechanical differential; no e-differential substitution.
-- Open differential requirement should be confirmed at the Technical Meeting.
-- Check 12 mm wheel hex / M4 hub / driveshaft compatibility against the actual purchased parts.
-- FRP needs backing plates/washers at fasteners; use cross-members against rail racking; isolate the camera mast from vibration.
-- Keep CAD source files and exports together; record units, revision, and material for each released part.
+- Batas lomba: lebar jejak roda 130–350 mm; wheelbase 160–550 mm; lebar total ≤400 mm; panjang ≤600 mm; tinggi ≤450 mm.
+- Differential mekanis wajib; tidak boleh diganti e-differential.
+- Kewajiban differential terbuka sebaiknya dikonfirmasi di Technical Meeting.
+- Cek kompatibilitas hex roda 12 mm / hub M4 / driveshaft terhadap part yang benar-benar dibeli.
+- FRP butuh backing plate/ring di titik pengencang; pakai cross-member agar dua rel tidak racking; isolasi tiang kamera dari getaran.
+- Simpan file sumber CAD bersama hasil ekspornya; catat satuan, revisi, dan material untuk setiap part yang dirilis.
 
-No CAD has been copied into this folder yet; source files remain in the existing workspace.
+Belum ada CAD yang disalin ke folder ini; file sumber tetap berada di workspace lama.

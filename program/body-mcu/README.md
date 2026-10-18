@@ -1,7 +1,7 @@
-# Arduino-compatible body controller
+# Body controller berbasis Arduino-compatible
 
-Open `body_controller/body_controller.ino` in Arduino IDE or run `arduino-cli compile --fqbn arduino:avr:uno body_controller` from this folder. It reads `speed_mps,steering_rad\n` over serial at 115200 baud, has an MCU-side stale-command stop, and reads an active-low e-stop input. The Uno target is only a syntax/build check; confirm your intended MCU and pin mapping before flashing.
+Buka `body_controller.ino` di Arduino IDE atau jalankan `arduino-cli compile --fqbn arduino:avr:uno .` dari folder ini. Sketsa membaca `speed_mps,steering_rad\n` lewat serial pada 115200 baud, punya penghentian di sisi MCU saat perintah basi, dan membaca input e-stop active-low. Target Uno hanya untuk cek sintaks/build; konfirmasi MCU dan pin mapping yang diingat sebelum flashing.
 
-Pin assignments are placeholders. Match the board and driver datasheets before wiring. The sketch uses generic PWM + direction output for an H-bridge. For the current planned 540 motor + RC ESC hardware, use the ESC's supported servo-PWM protocol instead of connecting its signal input to a DC motor driver's PWM/DIR pins. Keep the Jetson isolated from motor current and drive power.
+Assignmen pin masih placeholder. Cocokkan dengan datasheet board dan driver sebelum mengawinkan. Sketsa memakai output PWM + arah generik untuk H-bridge. Untuk hardware yang direncanakan (motor 540 + RC ESC), gunakan protokol servo-PWM yang didukung ESC, jangan sambungkan input sinyalnya ke pin PWM/DIR driver motor DC. Jaga Jetson tetap terisolasi dari arus motor dan daya penggerak.
 
-Before testing: motor wheels lifted, current-limited supply, verified e-stop cuts motor output, and no unattended run. Speed-to-PWM mapping and steering centre/endpoints need calibration on the actual chassis. Encoder/IMU sampling and MCU status telemetry are not included yet.
+Sebelum pengujian: roda penggerak diangkat, sumber arus berbatas, e-stop sudah terbukti mematikan output motor, dan tanpa pengawasan. Pemetaan speed ke PWM serta titik tengah/ujung kemudi perlu kalibrasi di sasis nyata. Sampling encoder/IMU dan telemetri status MCU belum ada di sketsa ini.

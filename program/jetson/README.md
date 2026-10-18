@@ -1,49 +1,49 @@
-# Robot runtime scaffold
+# Scaffold runtime robot
 
-Jetson Orin Nano owns image capture, ONNX inference, lane geometry, planning and run logs. A body MCU owns PWM, encoder/IMU sampling, start/e-stop input and the setpoint watchdog. The runtime must never replace that watchdog.
+Jetson Orin Nano memegang akuisisi gambar, inferensi ONNX, geometri lajur, perencanaan, dan log run. MCU bodi memegang PWM, sampling encoder/IMU, input start/e-stop, dan watchdog setpoint. Runtime tidak boleh menggantikan watchdog tersebut.
 
-## Safe first run
+## Menjalankan pertama kali dengan aman
 
 ```sh
 python3 main.py --self-check
 python3 main.py --config robot.example.json
 ```
 
-The example config runs dry. It creates a timestamped run directory with `telemetry.csv` and `events.jsonl`, and sends no actuator commands. Copy it to `robot.json` before setting values. Do not switch `dry_run` off until camera, trained model, start input, MCU protocol, e-stop behavior and watchdog have been bench-tested with wheels raised.
+Konfigurasi contoh berjalan kering (dry). Ia membuat direktori run bertimestamp berisi `telemetry.csv` dan `events.jsonl`, dan tidak mengirim perintah aktuator. Salin ke `robot.json` sebelum mengisi nilai. Jangan matikan `dry_run` sampai kamera, model terlatih, input start, protokol MCU, perilaku e-stop, dan watchdog sudah diuji di meja dengan roda terangkat.
 
-## Layout
+## Isi folder
 
-- `main.py`: launch, state orchestration and loop.
-- `core.py`: config, command/observation data and state machine.
-- `camera.py`: CSI/GStreamer capture.
-- `vision.py`: ONNX inference and lane-estimation seam.
-- `controller.py`: lane-to-steering command seam.
-- `mcu.py`: serial command driver. Protocol is ASCII `speed_mps,steering_rad\\n`, both decimal, fixed to four places; range is ±0.8 m/s and ±0.55 rad at 115200 baud.
-- Main loop runs at configured `loop_hz` (default 60 Hz), records overrun events when one cycle exceeds its period, and cannot force the CSI camera to produce frames at that rate.
-- `telemetry.py`: local run logs.
-- `dashboard.py` + `dashboard.html`: optional read-only dashboard on `127.0.0.1:18765` by default. From `robot-fw/`, run `python3 dashboard.py`; point at another output directory with `--runs PATH`. For a trusted pit LAN only, pass `--host 0.0.0.0` and open `http://<jetson-ip>:18765/` from another device. Toggle **Show clearly labeled simulated telemetry** to preview fabricated sample values; they come from `/api/demo` and are never written into run logs. Enter the camera streamer URL (Jetson USB-network default: `http://192.168.55.1:8080/stream`) and connect to view MJPEG. The feed is served by a separate HTTP service and may be blocked by browser mixed-content or network-origin policy when the dashboard is HTTPS or another device cannot reach the Jetson camera endpoint. The dashboard and camera feed are bench/pit only; stop them before competition attempts.
-- `arduino/body_controller/`: Arduino-compatible motor/steering MCU sketch.
+- `main.py`: peluncuran, orkestrasi state, dan loop.
+- `core.py`: konfigurasi, data command/observation, dan state machine.
+- `camera.py`: capture CSI/GStreamer.
+- `vision.py`: inferensi ONNX dan seam estimasi lajur.
+- `controller.py`: seam lajur ke perintah kemudi.
+- `mcu.py`: driver perintah serial. Protokol ASCII `speed_mps,steering_rad\n`, keduanya desimal dengan empat angka di belakang koma; rentang ±0.8 m/s dan ±0.55 rad pada 115200 baud.
+- Loop utama berjalan pada `loop_hz` terkonfigurasi (default 60 Hz), mencatat event overrun saat satu siklus melewati periodenya, dan tidak bisa memaksa kamera CSI menghasilkan frame pada laju itu.
+- `telemetry.py`: log run lokal.
+- `dashboard.py` + `dashboard.html`: dashboard read-only opsional di `127.0.0.1:18765` secara default. Dari folder ini jalankan `python3 dashboard.py`; arahkan ke direktori output lain dengan `--runs PATH`. Khusus LAN pit yang tepercaya, lewati `--host 0.0.0.0` lalu buka `http://<jetson-ip>:18765/` dari perangkat lain. Aktifkan **Show clearly labeled simulated telemetry** untuk melihat contoh nilai palsu; nilainya berasal dari `/api/demo` dan tidak pernah ditulis ke log run. Masukkan URL streamer kamera (default jaringan USB Jetson: `http://192.168.55.1:8080/stream`) lalu connect untuk melihat MJPEG. Feed dilayani service HTTP terpisah dan bisa terblokir mixed-content atau kebijakan origin browser bila dashboard memakai HTTPS atau perangkat lain tidak bisa menjangkau endpoint kamera Jetson. Dashboard dan feed kamera hanya untuk bench/pit; matikan sebelum percobaan lomba.
+- `../body-mcu/`: sketsa MCU motor/kemudi berbasis Arduino-compatible.
 
-## Runtime seams
+## Seam runtime
 
-- `Camera` opens the configured Jetson GStreamer pipeline through OpenCV and rejects unexpected frame sizes.
-- `OnnxDetector` loads ONNX through OpenCV DNN, but currently only reports output shape. It does not decode detections; live commands stay at zero until the model-specific decoder and lane estimator return valid geometry.
-- `LaneEstimator` still needs the calibrated lane/dash detector and ground projection. Validate estimates against simulator dataset ground truth before connecting a motor.
-- `Controller` sends zero speed while the lane estimate is missing. Its steering law is a starting point, not tuned vehicle control.
-- `McuLink` sends exactly `speed_mps,steering_rad\\n`; the Arduino sketch uses that same format. `motor_driver` is recorded configuration for the MCU sketch selection, not additional packet data.
-- `StartGate` is a console Enter gate for bench runs. The physical start-button adapter and MCU e-stop status return are not yet wired; MCU e-stop input must still cut drive independently.
-- `max_inference_ms` and `lane_lost_frames` request a zero command / DEGRADED state when vision is late or absent. MCU watchdog remains the last line of defense.
+- `Camera` membuka pipeline GStreamer Jetson lewat OpenCV dan menolak ukuran frame yang tidak sesuai.
+- `OnnxDetector` memuat ONNX lewat OpenCV DNN, tetapi saat ini hanya melaporkan bentuk output. Deteksi belum didekode; perintah live tetap nol sampai decoder spesifik model dan estimator lajur mengembalikan geometri valid.
+- `LaneEstimator` masih butuh detektor lajur/dash terkalibrasi dan proyeksi ke bidang tanah. Validasi estimasi terhadap ground truth dataset simulator sebelum menyambungkan motor.
+- `Controller` mengirim kecepatan nol selama estimasi lajur tidak tersedia. Hukum kemudinya baru titik awal, belum control kendaraan yang sudah dituning.
+- `McuLink` mengirim tepat `speed_mps,steering_rad\n`; sketsa MCU memakai format yang sama. `motor_driver` hanya konfigurasi tercatat untuk pemilihan sketsa MCU, bukan tambahan data paket.
+- `StartGate` adalah gate Enter di konsol untuk run bench. Adaptor tombol start fisik dan pengembalian status e-stop dari MCU belum terpasang; input e-stop di MCU tetap harus memutus penggerak secara independen.
+- `max_inference_ms` dan `lane_lost_frames` meminta perintah nol / state DEGRADED saat visi terlambat atau tidak ada. Watchdog MCU tetap menjadi lapisan pertahanan terakhir.
 
-## Arduino folder
+## Folder MCU bodi
 
-`arduino/body_controller.ino` is a pin-configurable Arduino-compatible body-controller example. It outputs PWM + direction for a driver such as a BTS7960-style H-bridge, or a servo-PWM signal to an external ESC when wired accordingly. Verify the exact driver, PWM frequency/current limits, steering pulse range, board timers, and pin capabilities before use. The pin map and speed-to-PWM conversion require calibration for the actual motor and driver. It does not implement encoder/IMU feedback or parse MCU telemetry back to Jetson.
+`../body-mcu/body_controller.ino` adalah contoh body controller berbasis Arduino-compatible dengan pin yang bisa dikonfigurasi. Ia mengeluarkan PWM + arah untuk driver seperti H-bridge kelas BTS7960, atau sinyal servo-PWM ke ESC eksternal bila dikawinkan demikian. Verifikasi driver persisnya, frekuensi/batas arus PWM, rentang pulsa kemudi, timer board, dan kemampuan pin sebelum dipakai. Pin map dan konversi speed ke PWM perlu kalibrasi untuk motor dan driver nyata. Sketsa ini belum mengimplementasikan umpan balik encoder/IMU maupun mengirim telemetri MCU kembali ke Jetson.
 
-## First integration order
+## Urutan integrasi pertama
 
-1. Confirm carrier and JetPack, then test CSI capture with the chassis lifted.
-2. Implement the real ONNX output decoder, then lane geometry and dataset comparison.
-3. Agree MCU packet fields and units; the current shared packet is two comma-separated floats.
-4. Verify driver pin wiring, e-stop wiring, watchdog and steering calibration with the drive wheels lifted.
-5. Wire the physical start input. Do not rely on the console gate for a competition deployment.
+1. Konfirmasi carrier dan JetPack, lalu uji capture CSI dengan sasis terangkat.
+2. Implementasikan decoder output ONNX yang sebenarnya, lalu geometri lajur dan perbandingan dengan dataset.
+3. Sepakati field dan satuan paket MCU; paket bersama saat ini dua float dipisah koma.
+4. Verifikasi pengkabelan pin driver, pengkabelan e-stop, watchdog, dan kalibrasi kemudi dengan roda penggerak terangkat.
+5. Pasang input start fisik. Jangan mengandalkan gate konsol untuk deploy lomba.
 
-No wireless or tethered telemetry should run during competition; store logs locally. Stop the dashboard before any attempt. The HTTP server binds to localhost by default; exposing it with `--host 0.0.0.0` is only for a trusted pit network and serves run details without authentication. This framework is not competition-ready until the model decoder, lane estimator, MCU status/fault reporting, physical start/e-stop integration and hardware calibration are finished.
+Tidak ada telemetri nirkabel atau berkabel yang boleh berjalan saat lomba; simpan log secara lokal. Matikan dashboard sebelum setiap percobaan. HTTP server bind ke localhost secara default; mengeksposnya dengan `--host 0.0.0.0` hanya untuk jaringan pit tepercaya dan menyajikan detail run tanpa autentikasi. Framework ini belum siap lomba sampai decoder model, estimator lajur, pelaporan status/fault MCU, integrasi start/e-stop fisik, dan kalibrasi hardware selesai.
