@@ -1,0 +1,1747 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KSTI 2026 Mini AV — arena 3D</title>
+<style>
+  :root{
+    --bg:#0d0f12; --panel:#15181d; --line:#262b33; --ink:#d7dde6; --dim:#8b95a3;
+    --acc:#ffb020; --race:#4ade80; --chal:#38bdf8; --bad:#f87171;
+    --mono:"JetBrains Mono","Cascadia Mono",Consolas,"Courier New",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font:13px/1.45 system-ui,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+  #app{display:grid;grid-template-columns:1fr 312px;grid-template-rows:minmax(0,1fr);
+    height:100vh;overflow:hidden}
+  #stage{position:relative;min-width:0;min-height:0}
+  canvas{position:absolute;inset:0;display:block;width:100%;height:100%}
+  #panel{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;
+    padding:12px 13px 26px}
+  h1{font-size:13px;margin:0 0 2px;letter-spacing:.02em}
+  h1 span{color:var(--dim);font-weight:400}
+  .sub{color:var(--dim);font-size:11px;margin:0 0 12px}
+  fieldset{border:0;border-top:1px solid var(--line);margin:14px 0 0;padding:11px 0 0}
+  legend{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--dim);
+    padding:0;margin:0 0 4px}
+  .modes{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  button{font:inherit;color:var(--ink);background:#1d222a;border:1px solid var(--line);
+    border-radius:5px;padding:7px 9px;cursor:pointer}
+  button:hover{border-color:#3c4553}
+  button.on{background:var(--acc);color:#14100a;border-color:var(--acc);font-weight:600}
+  button.ghost{background:transparent}
+  .row{display:flex;gap:6px}
+  .row>*{flex:1}
+  label{display:block;margin:9px 0 0;font-size:11px;color:var(--dim);
+    display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  label b{color:var(--ink);font:11px/1 var(--mono);font-weight:500}
+  input[type=range]{width:100%;margin:5px 0 0;accent-color:var(--acc);height:16px}
+  .chk{display:flex;align-items:center;gap:7px;margin:7px 0 0;font-size:11.5px;color:var(--ink)}
+  .chk input{accent-color:var(--acc);margin:0}
+  #hud{position:absolute;left:12px;top:12px;background:rgba(13,15,18,.82);
+    border:1px solid var(--line);border-radius:7px;padding:10px 12px;min-width:216px;
+    font:12px/1.5 var(--mono);backdrop-filter:blur(3px)}
+  #hud .k{color:var(--dim)}
+  #hud .v{float:right;font-weight:600}
+  #hud .big{font-size:19px;font-weight:700;letter-spacing:-.02em}
+  #hud hr{border:0;border-top:1px solid var(--line);margin:7px 0}
+  .mode-tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;
+    font-weight:700;letter-spacing:.07em}
+  .m-race{background:rgba(74,222,128,.16);color:var(--race)}
+  .m-chal{background:rgba(56,189,248,.16);color:var(--chal)}
+  #log{margin-top:8px;max-height:78px;overflow:auto;font:11px/1.45 var(--mono);color:var(--bad)}
+  #bar{position:absolute;left:0;right:0;bottom:0;height:3px;background:#1b1f26}
+  #bar i{display:block;height:100%;width:0;background:var(--acc)}
+  #note{position:absolute;right:12px;bottom:12px;max-width:300px;background:rgba(13,15,18,.86);
+    border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:11px;
+    color:var(--dim);line-height:1.5}
+  #note b{color:var(--ink)}
+  /* corner inference view: the exact POV frame the model saw, with its segmentation
+     masks + fitted polylines painted on by server_viz.py (/predict?viz=1). */
+  #infer{position:absolute;right:12px;top:12px;width:320px;background:rgba(13,15,18,.86);
+    border:1px solid var(--line);border-radius:7px;overflow:hidden;backdrop-filter:blur(3px);
+    font:11px/1.4 var(--mono)}
+  #infer.hide{display:none}
+  #infer .ih{display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid var(--line);
+    color:var(--dim);font-size:10px;letter-spacing:.06em;text-transform:uppercase}
+  #infer .ih b{color:var(--ink);font-weight:600;letter-spacing:0;text-transform:none;font-size:11px}
+  #infer .ih .x{margin-left:auto;cursor:pointer;color:var(--dim);font-size:12px;line-height:1}
+  #infer .ih .x:hover{color:var(--bad)}
+  #infer img{display:block;width:100%;height:auto;background:#000;aspect-ratio:16/9;object-fit:cover}
+  #infer .cap{padding:5px 8px;color:var(--dim);font-size:10.5px}
+  #infer .lg{display:inline-block;width:8px;height:8px;border-radius:2px;margin:0 3px 0 7px;vertical-align:middle}
+  /* telemetry HUD minimize control */
+  .hudmin{float:right;cursor:pointer;user-select:none;color:var(--dim);border:1px solid var(--line);
+    border-radius:4px;padding:0 5px;font-size:11px;line-height:16px;margin-left:6px}
+  .hudmin:hover{color:var(--ink);border-color:#3c4553}
+  kbd{font:10px var(--mono);background:#22272f;border:1px solid var(--line);border-radius:3px;
+    padding:0 4px;color:var(--ink)}
+  .formula{font:11px/1.6 var(--mono);color:var(--dim);background:#111419;
+    border:1px solid var(--line);border-radius:5px;padding:7px 8px;margin-top:8px}
+  .formula em{color:var(--acc);font-style:normal}
+  select{font:11.5px var(--mono);color:var(--ink);background:#1d222a;border:1px solid var(--line);
+    border-radius:5px;padding:5px 6px;width:100%;margin-top:5px}
+  .seg3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-top:4px}
+  .seg3 button{padding:6px 3px;font-size:11px}
+  .tiny{font-size:10.5px;color:var(--dim);line-height:1.55;margin:8px 0 0}
+  .tiny b{color:var(--ink);font-weight:500}
+  #recStat{font:11px/1.5 var(--mono);color:var(--dim);margin-top:8px;white-space:pre-wrap}
+  #recStat.warn{color:var(--bad)}
+  #recStat.ok{color:var(--race)}
+  progress{width:100%;height:5px;margin-top:7px;accent-color:var(--acc)}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="hud"></div>
+    <div id="infer">
+      <div class="ih"><b>Model view</b> · segmentation overlay <span class="x" id="inferX" title="Hide (I)">&#10005;</span></div>
+      <img id="inferImg" alt="latest inference frame" width="320" height="180">
+      <div class="cap" id="inferCap">waiting for the model driver&hellip;
+        <span class="lg" style="background:rgb(90,220,60)"></span>outer
+        <span class="lg" style="background:rgb(40,150,255)"></span>inner
+        <span class="lg" style="background:rgb(255,160,60)"></span>centre</div>
+    </div>
+    <div id="bar"><i></i></div>
+    <div id="note">
+      <b>Track rebuilt from the official lintasan PDF</b> — 19.41 m closed loop,
+      0.50 m constant width, tightest centreline radius 0.46 m, arena 5.5 × 6.8 m.
+      Car is a 1:10 mock within the guidebook envelope (440 × 200 × 120 mm,
+      250 mm wheelbase, 160 mm track).<br><br>
+      <kbd>space</kbd> run/stop &nbsp; <kbd>R</kbd> reset &nbsp; <kbd>M</kbd> mode &nbsp;
+      <kbd>C</kbd> camera &nbsp; <kbd>V</kbd> Cam POV &nbsp; <kbd>P</kbd> PiP &nbsp;
+      <kbd>T</kbd> minimize telemetry &nbsp; <kbd>I</kbd> inference view &nbsp;
+      drag = orbit, wheel = zoom
+    </div>
+  </div>
+
+  <aside id="panel">
+    <h1>Mini Autonomous Vehicle <span>/ KSTI 2026</span></h1>
+    <p class="sub">3D arena rehearsal — Robotics Competition at ITS, 12 Nov 2026
+      &nbsp;·&nbsp; build <b id="buildTag" style="color:var(--acc)">?</b></p>
+
+    <fieldset>
+      <legend>Mission</legend>
+      <div class="modes">
+        <button id="mRace" class="on">Autonomous Race</button>
+        <button id="mChal">Race Challenge</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button id="play">Run</button>
+        <button id="reset" class="ghost">Reset</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Camera</legend>
+      <div class="modes">
+        <button id="cOrbit" class="on">Orbit</button>
+        <button id="cChase">Chase</button>
+      </div>
+      <div class="modes" style="margin-top:6px">
+        <button id="cTop">Top</button>
+        <button id="cSide">Side</button>
+      </div>
+      <div class="modes" style="margin-top:6px">
+        <button id="cPov">Cam POV</button>
+        <button id="cPip" class="ghost">PiP POV</button>
+      </div>
+      <div class="chk"><input type="checkbox" id="kPivot"><span>Orbit / chase pivot = axle anchor point</span></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Camera mount &mdash; axle reference</legend>
+      <div class="seg3">
+        <button id="aRear">Rear axle</button>
+        <button id="aMid" class="on">Centre</button>
+        <button id="aFront">Front axle</button>
+      </div>
+      <label>Forward from anchor <b id="vMLong">+0.100 m</b></label>
+      <input type="range" id="sMLong" min="-0.35" max="0.35" step="0.005" value="0.1">
+      <label>Height above floor <b id="vMHei">0.160 m</b></label>
+      <input type="range" id="sMHei" min="0.04" max="0.45" step="0.005" value="0.16">
+      <label>Lateral (+ = car left) <b id="vMLat">+0.000 m</b></label>
+      <input type="range" id="sMLat" min="-0.1" max="0.1" step="0.005" value="0">
+      <label>Pitch down <b id="vMPit">12&deg;</b></label>
+      <input type="range" id="sMPit" min="-10" max="45" step="1" value="12">
+      <label>Horizontal FOV <b id="vMFov">62&deg;</b></label>
+      <input type="range" id="sMFov" min="40" max="150" step="1" value="62">
+      <p class="tiny"><b>Anchor</b> = rear axle centre (local x &minus;wb/2), wheelbase centre,
+        or front axle centre (+wb/2); wb 250 mm, track 160 mm. Sliders are metres relative to
+        that anchor, signed in vehicle terms: forward along the nose, left across the body.
+        Default 0.16 m / 12&deg; down / 62&deg; hFOV puts the painted ground just ahead of the
+        nose, like a Pi camera module v2 (IMX219) stood on the bulkhead &mdash; measure your
+        real mount and match the pixel rows.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Driver model</legend>
+      <label>Top speed <b id="vSpeed">1.60 m/s</b></label>
+      <input type="range" id="sSpeed" min="0.2" max="4" step="0.05" value="1.6">
+      <label>Lateral grip limit <b id="vAlat">6.0 m/s²</b></label>
+      <input type="range" id="sAlat" min="1" max="20" step="0.5" value="6">
+      <label>Line-follow error <b id="vNoise">0.020 m</b></label>
+      <input type="range" id="sNoise" min="0" max="0.09" step="0.005" value="0.02">
+      <label>Sim speed <b id="vTime">2.0×</b></label>
+      <input type="range" id="sTime" min="0.25" max="8" step="0.25" value="2">
+    </fieldset>
+
+    <fieldset>
+      <legend>Model driver &mdash; YOLO closed loop</legend>
+      <div class="modes">
+        <button id="mdOn">Enable model driver</button>
+        <button id="mdCam" class="ghost">Show POV feed</button>
+      </div>
+      <div class="chk"><input type="checkbox" id="mdInfer" checked>
+        <span>Corner inference view (segmentation overlay)</span></div>
+      <div id="mdStat" class="tiny" style="white-space:pre-wrap">off &mdash; car follows the scripted racing line.
+Enable, press Run: the car is freed from the path and steered by POSTing each POV frame to
+the local predictor (python server_viz.py, http://127.0.0.1:8766/). The corner <b>Model view</b>
+shows each frame the model saw with its segmentation masks painted on &mdash; live proof the seg fires.</div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Arena</legend>
+      <label>Checkpoints <b id="vCp">8</b></label>
+      <input type="range" id="sCp" min="3" max="14" step="1" value="8">
+      <label>Obstacle avoidance width <b id="vSig">0.45 m</b></label>
+      <input type="range" id="sSig" min="0.25" max="1.2" step="0.05" value="0.45">
+      <label>Stage limit <b id="vStage">300 s</b></label>
+      <input type="range" id="sStage" min="60" max="420" step="30" value="300">
+      <div class="chk"><input type="checkbox" id="kAck" checked>
+        <span>Ackermann steering (STP +0.25)</span></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Overlays</legend>
+      <div class="chk"><input type="checkbox" id="oLine" checked><span>Racing line</span></div>
+      <div class="chk"><input type="checkbox" id="oOther"><span>Other mode's path</span></div>
+      <div class="chk"><input type="checkbox" id="oDash" checked><span>Painted centre dashes</span></div>
+      <div class="chk"><input type="checkbox" id="oTex"><span>Original map texture</span></div>
+      <div class="chk"><input type="checkbox" id="oTrail" checked><span>Motion trail</span></div>
+      <div class="chk"><input type="checkbox" id="oAxle" checked><span>Axle centre markers</span></div>
+      <div class="chk"><input type="checkbox" id="oEgo"><span>Show own car in POV / capture</span></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Data capture &mdash; sim dataset</legend>
+      <label>Frame size</label>
+      <select id="qRes">
+        <option value="320x240">320 &times; 240</option>
+        <option value="480x360">480 &times; 360</option>
+        <option value="640x480" selected>640 &times; 480</option>
+        <option value="800x600">800 &times; 600</option>
+        <option value="1280x720">1280 &times; 720</option>
+      </select>
+      <label>Capture rate <b id="vRFps">20 fps</b></label>
+      <input type="range" id="sRFps" min="5" max="60" step="1" value="20">
+      <label>Max frames <b id="vRMax">260</b></label>
+      <input type="range" id="sRMax" min="20" max="900" step="20" value="260">
+      <label>JPEG quality <b id="vRQ">0.85</b></label>
+      <input type="range" id="sRQ" min="0.5" max="0.98" step="0.01" value="0.85">
+      <div class="chk"><input type="checkbox" id="rSeg" checked><span>Segmentation label maps (PNG)</span></div>
+      <div class="chk"><input type="checkbox" id="rAnn" checked><span>Per-frame annotations (JSONL)</span></div>
+      <div class="row" style="margin-top:9px">
+        <button id="rRun">Record lap</button>
+        <button id="rZip" class="ghost">Export ZIP</button>
+      </div>
+      <progress id="rBar" max="1" value="0" style="display:none"></progress>
+      <div id="recStat">Idle. Capture always uses the Cam POV mount above, whatever camera
+        view you are looking at, and steps the sim at a fixed 1/fps so frames are evenly
+        spaced in sim time.</div>
+      <p class="tiny">One click runs the whole lap headlessly: resets the run, drives it at
+        tscale 1, and keeps frames, label maps, a flat telemetry row per frame and projected
+        ground truth in memory, then zips them with a dataset README and a Python baseline
+        loader. Nothing leaves your machine and no server is needed.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Scoring (guidebook III.F)</legend>
+      <div class="formula">
+        S<em>AR</em> = (1 + max((T<em>stage</em>−T<em>total</em>)/T<em>stage</em>,0)) · cp<br>
+        S<em>ARC</em> = ((1 + …) · cp) / (2·Tcp)<br>
+        Total = S<em>AR</em> · (1 + STP + S<em>ARC</em>)<br>
+        penalty = coef · T<em>stage</em>/Tcp &nbsp; (0.8 off-track, 0.5 missed cp, 0.2 part off)
+      </div>
+    </fieldset>
+  </aside>
+</div>
+
+<script src="three.min.js"></script>
+<script src="track_data.js?v=16"></script>
+<script src="track_floor_data.js?v=16"></script>
+<script src="zipStore.js?v=16"></script>
+<script src="dataset_assets.js?v=16"></script>
+<script>
+/* Chrome caches and, more importantly, BLOCKS file:// sub-resources depending on how the page was
+   opened, so the bundled scripts carry ?v= tags and the map texture ships inlined as a data: URL.
+   This pre-check names whatever failed instead of letting the app die quietly. Bump the ?v= numbers
+   and the build stamp together whenever a bundled .js changes. */
+(function () {
+  var BUILD = '16-viz';
+  window.ARENA_BUILD = BUILD;
+  var missing = [];
+  if (!window.TRACK) missing.push('track_data.js');
+  if (!window.zipStore) missing.push('zipStore.js');
+  if (!window.DATASET_ASSETS) missing.push('dataset_assets.js');
+  window.ARENA_MISSING_DEPS = missing;
+  if (missing.length) document.addEventListener('DOMContentLoaded', function () {
+    var d = document.createElement('div');
+    d.style.cssText = 'position:fixed;inset:auto 12px 12px 12px;z-index:99;background:#3a1114;' +
+      'border:1px solid #f87171;color:#ffd9d9;padding:10px 12px;border-radius:7px;' +
+      'font:12px/1.55 system-ui,sans-serif';
+    d.innerHTML = '<b>Did not load: ' + missing.join(', ') + '</b><br>' +
+      'This page is running against a cached or incomplete copy of the folder. Press ' +
+      '<b>Ctrl+Shift+R</b> to hard-reload it. Everything those files provide — map geometry, ' +
+      'the dataset exporter, the embedded loader — will be broken or absent until then.';
+    document.body.appendChild(d);
+  });
+})();
+</script>
+<script>
+(function () {
+'use strict';
+const T = window.TRACK, M = T.meta;
+const PPM = M.px_per_m, NS = M.samples, LOOP = M.loop_length_m, DS = LOOP / NS;
+const CAR = { len: 0.44, wid: 0.20, hgt: 0.12, wb: 0.25, tw: 0.16, wr: 0.035 };
+
+/* ---------- path helpers ---------------------------------------------- */
+const BASE = T.path.map(p => ({ x: p[0], z: p[1] }));
+const WIDTH = T.width;
+
+function tangentAt(P, i, k) {
+  const n = P.length;
+  const a = P[(i - k + n) % n], b = P[(i + k) % n];
+  let tx = b.x - a.x, tz = b.z - a.z;
+  const L = Math.hypot(tx, tz) || 1;
+  return { x: tx / L, z: tz / L };
+}
+function offsetPath(P, off) {           // off: array of signed metres along the normal
+  const n = P.length, out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const t = tangentAt(P, i, 4);
+    out[i] = { x: P[i].x - t.z * off[i], z: P[i].z + t.x * off[i] };
+  }
+  return out;
+}
+function radii(P, k) {                  // circumscribed circle through 3 samples
+  const n = P.length, R = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = P[(i - k + n) % n], b = P[i], c = P[(i + k) % n];
+    const A = Math.hypot(b.x - a.x, b.z - a.z), B = Math.hypot(c.x - b.x, c.z - b.z),
+          C = Math.hypot(c.x - a.x, c.z - a.z);
+    const area = Math.abs((b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z)) / 2;
+    R[i] = area < 1e-9 ? 999 : (A * B * C) / (4 * area);
+  }
+  return R;
+}
+function smoothC(a, k) {
+  const n = a.length, out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = 0;
+    for (let j = -k; j <= k; j++) s += a[(i + j + n * 2) % n];
+    out[i] = s / (2 * k + 1);
+  }
+  return out;
+}
+
+/* ---------- state ------------------------------------------------------ */
+const S = {
+  mode: 'race', cam: 'orbit', playing: false,
+  vmax: 1.6, alat: 6, noise: 0.02, tscale: 2,
+  ncp: 8, sig: 0.45, stage: 300, ack: true,
+  u: 0, t: 0, pen: 0, penList: [], cpsHit: 0, nextCp: 0, viol: 0,
+  hold: 0, cool: 0, finished: false, best: null, result: null, why: '',
+  path: null, R: null, sgn: null, off: null, obstacles: [], cpIdx: [],
+  loop: LOOP, ds: DS,
+  off_now: 0, cover: 0, steerDeg: 0,
+  /* camera rig: anchor = which axle centre the mount is measured from */
+  anchor: 'mid', pivot: false, pip: false, ego: false,
+  mount: { long: 0.10, hei: 0.16, lat: 0.00, pit: 12, fov: 62 },
+  cap: { fps: 20, max: 260, q: 0.85, w: 640, h: 480, seg: true, ann: true }
+};
+const anchorLong = () => S.anchor === 'rear' ? -CAR.wb / 2
+  : S.anchor === 'front' ? CAR.wb / 2 : 0;
+
+function cpIndices() {
+  const out = [];
+  for (let k = 0; k < S.ncp; k++) out.push(Math.round(NS * (k + 0.5) / S.ncp) % NS);
+  return out;
+}
+function zeros() { return new Array(NS).fill(0); }
+
+/* Challenge route: the checkpoints become obstacles sitting on the line, so the car has to
+   put enough lateral distance between its flank and the cone to count as "avoided". */
+function challengeRoute() {
+  const half = WIDTH[0] / 2;
+  const off = zeros(), obstacles = [];
+  S.cpIdx.forEach((idx, k) => {
+    const side = k % 2 ? -1 : 1;
+    const lat = side * 0.045;                       // cone centre, off the line
+    const r = 0.045;
+    obstacles.push({ idx, lat, r, side });
+    const A = -(lat + side * (r + CAR.wid / 2 + 0.012));   // required clearance
+    for (let i = 0; i < NS; i++) {
+      let d = i - idx;
+      if (d > NS / 2) d -= NS; else if (d < -NS / 2) d += NS;
+      off[i] += A * Math.exp(-0.5 * (d * DS / S.sig) ** 2);
+    }
+  });
+  const lim = half - CAR.wid / 2 - 0.005;
+  return { off: off.map(v => Math.max(-lim, Math.min(lim, v))), obstacles };
+}
+function signedTurn(P, k) {
+  const n = P.length, out = new Array(n);
+  const head = i => Math.atan2(-tangentAt(P, i, k).z, tangentAt(P, i, k).x);
+  for (let i = 0; i < n; i++) {
+    let d = head((i + k) % n) - head((i - k + n) % n);
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    out[i] = Math.sign(d) || 1;
+  }
+  return out;
+}
+function buildRun() {
+  S.cpIdx = cpIndices();
+  const route = S.mode === 'chal' ? challengeRoute() : { off: zeros(), obstacles: [] };
+  S.obstacles = route.obstacles;
+  S.off = smoothC(route.off, 6);
+  S.path = offsetPath(BASE, S.off);
+  let L = 0;
+  for (let i = 0; i < NS; i++) {
+    const a = S.path[i], b = S.path[(i + 1) % NS];
+    L += Math.hypot(b.x - a.x, b.z - a.z);
+  }
+  S.loop = L; S.ds = L / NS;            // charge the Challenge detour as real distance
+  S.R = smoothC(radii(S.path, 7), 5);
+  S.sgn = smoothC(signedTurn(S.path, 6), 5).map(v => (v >= 0 ? 1 : -1));
+  rebuildArenaObjects();
+}
+function speedAt(i) {
+  return Math.min(S.vmax, Math.sqrt(Math.max(0.05, S.alat * Math.min(S.R[i % NS], 50))));
+}
+
+/* ---------- three.js scene -------------------------------------------- */
+const canvas = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d0f12);
+const camera = new THREE.PerspectiveCamera(46, 1, 0.02, 120);
+
+scene.add(new THREE.HemisphereLight(0x9fb6d4, 0x14171c, 0.55));
+const key = new THREE.DirectionalLight(0xfff2dd, 1.25);
+key.position.set(2.4, 4.2, 1.8);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = -4.5; key.shadow.camera.right = 4.5;
+key.shadow.camera.top = 4.5; key.shadow.camera.bottom = -4.5;
+key.shadow.camera.far = 14; key.shadow.bias = -0.0006;
+scene.add(key);
+const fill = new THREE.DirectionalLight(0x8fb4ff, 0.3);
+fill.position.set(-2.6, 2.4, -2.2);
+scene.add(fill);
+
+const hall = new THREE.Mesh(new THREE.PlaneGeometry(26, 26),
+  new THREE.MeshStandardMaterial({ color: 0x111419, roughness: 1 }));
+hall.rotation.x = -Math.PI / 2; hall.position.y = -0.012; hall.receiveShadow = true;
+scene.add(hall);
+
+function v2(P) { return P.map(p => new THREE.Vector2(p.x, -p.z)); }
+function bandMesh(outer, inner, color, y, rough) {
+  const s = new THREE.Shape(v2(outer));
+  s.holes.push(new THREE.Path(v2(inner.slice().reverse())));
+  const m = new THREE.Mesh(new THREE.ShapeGeometry(s, 12),
+    new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0, side: THREE.DoubleSide }));
+  m.rotation.x = -Math.PI / 2; m.position.y = y; m.receiveShadow = true;
+  return m;
+}
+function ribbon(P, w, color, y, closed, dash) {
+  const n = P.length, pos = new Float32Array(n * 2 * 3), idx = [];
+  for (let i = 0; i < n; i++) {
+    const t = tangentAt(P, i, 3), nx = -t.z, nz = t.x, h = w / 2;
+    pos[i * 6] = P[i].x + nx * h; pos[i * 6 + 1] = 0; pos[i * 6 + 2] = P[i].z + nz * h;
+    pos[i * 6 + 3] = P[i].x - nx * h; pos[i * 6 + 4] = 0; pos[i * 6 + 5] = P[i].z - nz * h;
+  }
+  let m = 0;
+  if (dash) {
+    const step = Math.max(2, Math.round(dash[0] / DS)), on = Math.round(dash[1] / DS);
+    for (let i = 0; i < n; i += step) for (let j = 0; j < on && i + j + 1 < n; j++) m++;
+    for (let i = 0; i < n; i += step) {
+      for (let j = 0; j < on && i + j + 1 < n; j++) {
+        const a = i + j, b = a + 1;
+        idx.push(a * 2, a * 2 + 1, b * 2, a * 2 + 1, b * 2 + 1, b * 2);
+      }
+    }
+  } else {
+    const lim = closed ? n : n - 1;
+    for (let i = 0; i < lim; i++) {
+      const j = (i + 1) % n;
+      idx.push(i * 2, i * 2 + 1, j * 2, i * 2 + 1, j * 2 + 1, j * 2);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setIndex(idx); g.computeVertexNormals();
+  const mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+    color, roughness: 0.9, side: THREE.DoubleSide,
+    emissive: color, emissiveIntensity: color === 0xffffff ? 0 : 0.22
+  }));
+  mesh.position.y = y;
+  return mesh;
+}
+
+/* Segmentation classes for the dataset label maps. tag() only fills meshes that have
+   not been classified yet, so a specific class set at creation survives a group tag.
+   The renderer writes sRGB, so a flat colour of "3" would land as byte 27: every class
+   value is pre-compensated through the inverse transfer function, and the ids are spaced
+   20 apart so MSAA boundary pixels still snap to the right class after quantising. */
+const SEG_ID = { background: 0, surface: 20, infield: 40, line: 60, dash: 80, ego: 100,
+  obstacle: 120, gate: 140, finish: 160, other: 180 };
+const HIDE = '__hide__';
+const linFromByte = t => t <= 0.04045 ? t / 12.92 : Math.pow((t + 0.055) / 1.055, 2.4);
+const segMat = {};
+Object.keys(SEG_ID).forEach(k => {
+  const c = linFromByte(SEG_ID[k] / 255);
+  segMat[k] = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(c, c, c), fog: false, side: THREE.DoubleSide });
+});
+function tag(root, cls) {
+  root.traverse(o => { if (o.isMesh && !o.userData.seg) o.userData.seg = cls; });
+}
+
+const OUTER = T.outer.map(p => ({ x: p[0], z: p[1] }));
+const INNER = T.inner.map(p => ({ x: p[0], z: p[1] }));
+const bandSurf = bandMesh(OUTER, INNER, 0x2a2f37, 0.0015, 0.96); scene.add(bandSurf);
+const bandIn = bandMesh(INNER, INNER.map(p => ({ x: p.x * 0.02, z: p.z * 0.02 })), 0x191d23, 0.0008, 1);
+scene.add(bandIn);
+const outerLine = ribbon(OUTER, 0.0167, 0xffffff, 0.004, true); scene.add(outerLine);
+const innerLine = ribbon(INNER, 0.0167, 0xffffff, 0.004, true); scene.add(innerLine);
+const dashMesh = ribbon(BASE, 0.014, 0xf2f5f8, 0.004, true, [0.10, 0.05]);
+scene.add(dashMesh);
+
+const lineMesh = ribbon(BASE, 0.006, 0xff2ea6, 0.006, true);
+scene.add(lineMesh);
+let otherMesh = null;
+
+tag(hall, HIDE); tag(bandSurf, 'surface'); tag(bandIn, 'infield');
+tag(outerLine, 'line'); tag(innerLine, 'line'); tag(dashMesh, 'dash');
+tag(lineMesh, HIDE);
+
+/* start / finish bar */
+(function () {
+  const t = tangentAt(BASE, 0, 4), nx = -t.z, nz = t.x, h = WIDTH[0] / 2;
+  const g = new THREE.Group();
+  const cells = 8, cw = (2 * h) / cells;
+  for (let i = 0; i < cells; i++) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.004, cw),
+      new THREE.MeshStandardMaterial({ color: i % 2 ? 0xf5f7fa : 0xd92b2b, roughness: .8 }));
+    const off = -h + cw * (i + .5);
+    m.position.set(BASE[0].x + nx * off, 0.006, BASE[0].z + nz * off);
+    m.rotation.y = Math.atan2(-t.z, t.x);
+    m.userData.seg = 'finish';
+    g.add(m);
+  }
+  scene.add(g);
+})();
+
+/* checkpoint gates + obstacles, rebuilt with the arena */
+let gates = new THREE.Group(), obs = new THREE.Group();
+scene.add(gates); scene.add(obs);
+function rebuildArenaObjects() {
+  scene.remove(gates); scene.remove(obs); scene.remove(otherMesh);
+  gates = new THREE.Group(); obs = new THREE.Group();
+  const half = WIDTH[0] / 2;
+  S.cpIdx.forEach((idx, k) => {
+    const p = BASE[idx], t = tangentAt(BASE, idx, 4), nx = -t.z, nz = t.x;
+    const g = new THREE.Group();
+    [-1, 1].forEach(s => {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.11, 8),
+        new THREE.MeshStandardMaterial({ color: 0x2fd06a, emissive: 0x0d5c2a, roughness: .6 }));
+      post.position.set(p.x + nx * half * s, 0.055, p.z + nz * half * s);
+      g.add(post);
+    });
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.003, 2 * half),
+      new THREE.MeshStandardMaterial({ color: 0x2fd06a, emissive: 0x1a7f42,
+        emissiveIntensity: .5, roughness: .9 }));
+    stripe.position.set(p.x, 0.005, p.z);
+    stripe.rotation.y = Math.atan2(-t.z, t.x);
+    g.add(stripe);
+    const num = makeLabel('CP' + (k + 1), 0x9ff5bd);
+    num.position.set(p.x + nx * (half + 0.07), 0.13, p.z + nz * (half + 0.07));
+    g.add(num);
+    tag(g, 'gate');
+    gates.add(g);
+  });
+  S.obstacles.forEach((o, k) => {
+    const bp = BASE[o.idx], t = tangentAt(BASE, o.idx, 4);
+    const cx = bp.x - t.z * o.lat, cz = bp.z + t.x * o.lat;
+    const m = new THREE.Mesh(new THREE.ConeGeometry(o.r, 0.13, 14),
+      new THREE.MeshStandardMaterial({ color: 0xff7a1a, roughness: .55 }));
+    m.position.set(cx, 0.065, cz); m.castShadow = true;
+    const base = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.006, 0.11),
+      new THREE.MeshStandardMaterial({ color: 0xe0e4ea }));
+    base.position.set(cx, 0.003, cz);
+    m.userData.seg = 'obstacle'; base.userData.seg = 'obstacle';
+    o.x = cx; o.z = cz;                          // keep world position for the dataset
+    obs.add(m, base);
+    const lb = makeLabel('O' + (k + 1), 0xffc79a);
+    lb.position.set(cx, 0.2, cz); obs.add(lb);
+  });
+  scene.add(gates); scene.add(obs);
+  obs.visible = S.mode === 'chal';
+  if (document.getElementById('oOther').checked) {
+    const alt = S.mode === 'race' ? offsetPath(BASE, smoothC(challengeRoute().off, 6)) : BASE;
+    otherMesh = ribbon(alt, 0.006, 0x38bdf8, 0.0055, true);
+    otherMesh.userData.seg = HIDE;
+    scene.add(otherMesh);
+  }
+}
+function makeLabel(txt, color) {
+  const c = document.createElement('canvas'); c.width = 128; c.height = 64;
+  const x = c.getContext('2d');
+  x.font = 'bold 40px JetBrains Mono, monospace';
+  x.fillStyle = '#' + new THREE.Color(color).getHexString();
+  x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(txt, 64, 32);
+  const tex = new THREE.CanvasTexture(c); tex.minFilter = THREE.LinearFilter;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+  s.scale.set(0.11, 0.055, 1);
+  return s;
+}
+
+/* ---------- the mock 1:10 car ----------------------------------------- */
+const car = new THREE.Group();
+(function buildCar() {
+  const paint = new THREE.MeshStandardMaterial({ color: 0xe63b2e, roughness: .38, metalness: .12 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x1b1e23, roughness: .8 });
+  const tub = new THREE.Mesh(new THREE.BoxGeometry(CAR.len * .78, .045, CAR.tw * .92), paint);
+  tub.position.set(-CAR.len * .02, CAR.wr + .028, 0);
+  const nose = new THREE.Mesh(new THREE.BoxGeometry(CAR.len * .2, .03, CAR.tw * .8), paint);
+  nose.position.set(CAR.len * .38, CAR.wr + .02, 0);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(CAR.len * .3, .035, CAR.tw * .72), dark);
+  cabin.position.set(-CAR.len * .04, CAR.wr + .062, 0);
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(.05, .006, CAR.wid * .9), dark);
+  wing.position.set(-CAR.len * .44, CAR.wr + .085, 0);
+  [-1, 1].forEach(s => {
+    const e = new THREE.Mesh(new THREE.BoxGeometry(.006, .05, CAR.wid * .92), dark);
+    e.position.set(-CAR.len * .46, CAR.wr + .06, s * CAR.wid * .46); car.add(e);
+  });
+  const eStop = new THREE.Mesh(new THREE.CylinderGeometry(.016, .019, .016, 16),
+    new THREE.MeshStandardMaterial({ color: 0xd92b2b, roughness: .45 }));
+  eStop.position.set(-CAR.len * .18, CAR.wr + .088, 0);
+  const cam = new THREE.Mesh(new THREE.BoxGeometry(.022, .016, .03),
+    new THREE.MeshStandardMaterial({ color: 0x2b6fd6, roughness: .3, metalness: .5 }));
+  cam.position.set(CAR.len * .3, CAR.wr + .075, 0);
+  [tub, nose, cabin, wing, eStop, cam].forEach(m => { m.castShadow = true; car.add(m); });
+
+  car.userData.wheels = [];
+  [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(([f, s]) => {
+    const knuckle = new THREE.Group();
+    knuckle.position.set(f * CAR.wb / 2, CAR.wr, s * CAR.tw / 2);
+    const w = new THREE.Mesh(new THREE.CylinderGeometry(CAR.wr, CAR.wr, .024, 18),
+      new THREE.MeshStandardMaterial({ color: 0x0e1013, roughness: .95 }));
+    w.rotation.x = Math.PI / 2; w.castShadow = true;
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(CAR.wr * .52, CAR.wr * .52, .026, 12),
+      new THREE.MeshStandardMaterial({ color: 0xb9c2cf, roughness: .35, metalness: .7 }));
+    hub.rotation.x = Math.PI / 2;
+    knuckle.add(w, hub); car.add(knuckle);
+    car.userData.wheels.push({ knuckle, wheel: w, hub, front: f > 0, side: s });
+  });
+  const skid = new THREE.Mesh(new THREE.PlaneGeometry(CAR.len * 1.1, CAR.wid * 1.25),
+    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: .3 }));
+  skid.rotation.x = -Math.PI / 2; skid.position.y = 0.0025;
+  skid.userData.seg = HIDE;                      // fake shadow, not a real surface
+  car.add(skid);
+  const camBody = new THREE.Mesh(new THREE.BoxGeometry(.03, .024, .038),
+    new THREE.MeshStandardMaterial({ color: 0x11161c, roughness: .4, metalness: .4 }));
+  camBody.userData.seg = HIDE;
+  car.add(camBody);
+  car.userData.camBody = camBody;
+})();
+tag(car, 'ego');
+scene.add(car);
+
+/* ---------- camera rig on the chosen axle anchor ----------------------- */
+const povAnchor = new THREE.Object3D();
+car.add(povAnchor);
+const axleMarks = new THREE.Group();
+(function buildAxleMarks() {
+  const mk = (x, col, txt) => {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(0.013, 14, 12),
+      new THREE.MeshBasicMaterial({ color: col }));
+    s.position.set(x, 0.001, 0); s.userData.seg = HIDE; axleMarks.add(s);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.024, 0.031, 24),
+      new THREE.MeshBasicMaterial({ color: col, side: THREE.DoubleSide }));
+    ring.rotation.x = -Math.PI / 2; ring.position.set(x, 0.0015, 0);
+    ring.userData.seg = HIDE; axleMarks.add(ring);
+    const lb = makeLabel(txt, col);
+    lb.position.set(x, 0.1, 0); lb.scale.set(0.08, 0.04, 1); axleMarks.add(lb);
+  };
+  mk(-CAR.wb / 2, 0x38bdf8, 'R'); mk(0, 0xd7dde6, 'C'); mk(CAR.wb / 2, 0xff7a1a, 'F');
+  [1, -1].forEach(sg => {
+    [1, -1].forEach(f => {
+      const hub = new THREE.Mesh(new THREE.SphereGeometry(0.008, 10, 8),
+        new THREE.MeshBasicMaterial({ color: 0x9aa4b2 }));
+      hub.position.set(f * CAR.wb / 2, CAR.wr, sg * CAR.tw / 2);
+      hub.userData.seg = HIDE; axleMarks.add(hub);
+    });
+  });
+})();
+car.add(axleMarks);
+
+function updateMount() {
+  const m = S.mount, z = -m.lat;              // slider + = car left, local +z = right
+  povAnchor.position.set(anchorLong() + m.long, m.hei, z);
+  povAnchor.updateMatrixWorld(true);
+  const cb = car.userData.camBody;
+  cb.position.set(anchorLong() + m.long, m.hei - 0.012, z);
+  cb.rotation.set(0, 0, -THREE.MathUtils.degToRad(m.pit));   // box tilts with the view
+}
+/* three.js takes a VERTICAL fov, the mount spec is horizontal. For ratio = width/height:
+   tan(vfov/2) = tan(hfov/2) / ratio, so a wider frame means a narrower vertical view.
+   Dividing the other way round made the render disagree with the exported intrinsics. */
+function vfovFrom(hfovDeg, ratio) {
+  return THREE.MathUtils.radToDeg(2 * Math.atan(
+    Math.tan(THREE.MathUtils.degToRad(hfovDeg) / 2) / ratio));
+}
+const _v = new THREE.Vector3(), _q = new THREE.Quaternion();
+const _F = new THREE.Vector3(), _U = new THREE.Vector3(), _L = new THREE.Vector3(),
+      _R = new THREE.Vector3(), _B = new THREE.Vector3(), _M = new THREE.Matrix4();
+/* A camera looks down its own -Z, so the anchor's quaternion alone would point the view
+   out of the car's side. Build the basis explicitly: forward pitched down by `pit`,
+   image up tipped forward, right from their cross product. */
+function posePovCam(cam, aspect) {
+  car.updateMatrixWorld(true);
+  povAnchor.getWorldPosition(cam.position);
+  car.getWorldQuaternion(_q);
+  const pit = THREE.MathUtils.degToRad(S.mount.pit);
+  _F.set(1, 0, 0).applyQuaternion(_q);                        // car forward
+  _U.set(0, 1, 0).applyQuaternion(_q);                        // car up
+  const cp = Math.cos(pit), sp = Math.sin(pit);
+  _L.copy(_F).multiplyScalar(cp).addScaledVector(_U, -sp);    // view direction
+  _B.copy(_U).multiplyScalar(cp).addScaledVector(_F, sp);     // image up
+  _R.copy(_L).cross(_B).normalize();                          // image right
+  _M.makeBasis(_R, _B, _L.negate());
+  cam.quaternion.setFromRotationMatrix(_M);
+  cam.aspect = aspect;
+  cam.fov = vfovFrom(S.mount.fov, aspect);
+  cam.updateProjectionMatrix();
+  cam.updateMatrixWorld(true);
+}
+const povCam = new THREE.PerspectiveCamera(60, 1, 0.02, 120);
+const capCam = new THREE.PerspectiveCamera(60, 1, 0.02, 120);
+scene.add(povCam); scene.add(capCam);
+
+const trail = (() => {
+  const n = 260, pos = new Float32Array(n * 3);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const l = new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0xffb020 }));
+  l.frustumCulled = false; scene.add(l);
+  return { line: l, n, pos, head: 0, count: 0 };
+})();
+
+/* ---------- map texture (inlined data URL, with the file as fallback) --- */
+let texPlane = null;
+new THREE.TextureLoader().load(window.TRACK_FLOOR_DATA || 'track_floor.jpg', tx => {
+  tx.encoding = THREE.sRGBEncoding;
+  const w = M.image_wh[0] / PPM, h = M.image_wh[1] / PPM;
+  /* The committee's lintasan export is a black-background CAD drawing (90 % of its pixels
+     are near black). Painted over the arena at normal opacity that looks like nothing
+     happened, and at 0.5 mm above the ribbons it z-fights. Additive blending makes the
+     black paper add nothing and the drawn lines glow through, so the source map reads as
+     an overlay on top of the rebuilt geometry instead of replacing it. */
+  texPlane = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
+    new THREE.MeshBasicMaterial({ map: tx, transparent: true, opacity: .95,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+  texPlane.rotation.x = -Math.PI / 2;
+  texPlane.position.set(w / 2 - M.centre_px[0] / PPM, 0.0075,
+                        h / 2 - M.centre_px[1] / PPM);
+  texPlane.visible = false;
+  texPlane.userData.seg = HIDE;                  // reference art, not a real surface
+  scene.add(texPlane);
+}, undefined, () => { document.getElementById('oTex').parentElement.style.display = 'none'; });
+
+/* ---------- camera control -------------------------------------------- */
+const orbit = { r: 9.4, yaw: -0.35, pitch: 0.98, tx: 0, tz: 0 };
+let drag = null;
+canvas.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointerup', () => drag = null);
+canvas.addEventListener('pointermove', e => {
+  if (!drag) return;
+  orbit.yaw -= (e.clientX - drag.x) * 0.007;
+  orbit.pitch = Math.min(1.5, Math.max(0.06, orbit.pitch + (e.clientY - drag.y) * 0.006));
+  drag = { x: e.clientX, y: e.clientY };
+});
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  orbit.r = Math.min(14, Math.max(0.7, orbit.r * (1 + Math.sign(e.deltaY) * 0.09)));
+}, { passive: false });
+
+function anchorWorld(out) { out.set(anchorLong(), 0, 0); return car.localToWorld(out); }
+
+function placeCamera(dt) {
+  const i = Math.floor(S.u) % NS, p = S.path[i], t = tangentAt(S.path, i, 5);
+  car.updateMatrixWorld(true);
+  if (S.cam === 'orbit') {
+    const a = S.pivot ? anchorWorld(new THREE.Vector3()) : null;
+    const px = a ? a.x : 0, pz = a ? a.z : 0;
+    orbit.tx += (px - orbit.tx) * Math.min(1, dt * 3);
+    orbit.tz += (pz - orbit.tz) * Math.min(1, dt * 3);
+    camera.position.set(orbit.tx + orbit.r * Math.cos(orbit.pitch) * Math.sin(orbit.yaw),
+                        orbit.r * Math.sin(orbit.pitch) + 0.1,
+                        orbit.tz + orbit.r * Math.cos(orbit.pitch) * Math.cos(orbit.yaw));
+    camera.lookAt(orbit.tx, S.pivot ? CAR.wr + 0.04 : 0.06, orbit.tz);
+  } else if (S.cam === 'chase') {
+    const a = S.pivot ? anchorWorld(new THREE.Vector3()) : p;
+    camera.position.lerp(new THREE.Vector3(a.x - t.x * 0.75, 0.42, a.z - t.z * 0.75),
+                         Math.min(1, dt * 4.5));
+    camera.lookAt(a.x + t.x * 0.35, 0.06, a.z + t.z * 0.35);
+  } else if (S.cam === 'top') {
+    camera.position.lerp(new THREE.Vector3(p.x, 3.1, p.z), Math.min(1, dt * 4));
+    camera.up.set(0, 0, -1); camera.lookAt(p.x, 0, p.z); camera.up.set(0, 1, 0);
+  } else if (S.cam === 'pov') {
+    posePovCam(povCam, canvas.clientWidth / Math.max(1, canvas.clientHeight));
+  } else {
+    camera.position.lerp(new THREE.Vector3(p.x + 1.5, 0.22, p.z), Math.min(1, dt * 4));
+    camera.lookAt(p.x, 0.08, p.z);
+  }
+}
+/* the ego body is bolted to the POV camera, so it cannot be in front of it; every other
+   view keeps showing the car. Capture and PiP hide it themselves. */
+const egoVisible = () => S.ego || S.cam !== 'pov';
+
+/* ---------- model driver: free-pose physics + YOLO closed loop ---------- */
+/* When MD.on, the car is NOT glued to the path any more: it owns a real planar pose
+   (x, z, yaw) driven by an Ackermann bicycle model, and every control tick captures the
+   POV image, POSTs it to the local YOLO server, unprojects the returned polylines to
+   ground, fits the lane and runs the same Stanley law the baseline loader uses. All
+   scoring (violations, checkpoints) still comes from the stock S.u bookkeeping via
+   nearestOn() projection - the car just earns its progress by driving. */
+const MD = {
+  on: false, showFeed: false, busy: false,
+  x: 0, z: 0, yaw: 0, v: 0, steer: 0,          // pose + actuators
+  lat: 0, head: 0, curv: 0, rows: 0,            // last lane fit
+  ping: 0, fails: 0, fps: 0, dbg: null,
+  hist: [],                                     // trail of free-pose positions
+};
+const MD_GEOM = { h: 0.16, pit: 12, long: 0.10, fx: 0, cx: 0, cy: 0 };
+
+function mdSyncFromPath() {                    // hand-off: path pose -> free pose
+  const i = Math.floor(S.u) % NS;
+  MD.x = S.path[i].x; MD.z = S.path[i].z;
+  MD.yaw = Math.atan2(-tangentAt(S.path, i, 5).z, tangentAt(S.path, i, 5).x);
+  MD.v = Math.min(speedAt(i), 0.4); MD.cmdV = MD.v; MD.steer = 0;   // restart slow
+  MD.lat = 0; MD.head = 0; MD.curv = 0; MD.rows = 0; MD.valid = false;   // drop the pre-reset fit
+}
+function mdTruth(xRef = 0.45) {                 // ground truth for the same quantities mdSense fits
+  let bi = -1, bd = 1e9;
+  for (let j = 0; j < NS; j += 2) {
+    const p = carFramePoint(BASE[j].x, BASE[j].z);
+    const d = Math.abs(p.fwd - xRef) + 0.5 * Math.abs(p.left);
+    if (p.fwd > 0 && d < bd) { bd = d; bi = j; }
+  }
+  if (bi < 0) return null;
+  const p0 = carFramePoint(BASE[bi].x, BASE[bi].z);
+  const pa = carFramePoint(BASE[(bi - 15 + NS) % NS].x, BASE[(bi - 15 + NS) % NS].z);
+  const pb = carFramePoint(BASE[(bi + 15) % NS].x, BASE[(bi + 15) % NS].z);
+  let head = Math.atan2(pb.left - pa.left, pb.fwd - pa.fwd);
+  if (Math.abs(head) > Math.PI / 2) head -= Math.sign(head) * Math.PI;   // BASE may run either way
+  return { lat: p0.left, head, fwd: p0.fwd, R: S.R[bi] };
+}
+function mdCapRenderer() {                     // own GL context: no resize of the main view
+  if (MD._capR) return MD._capR;
+  const c = document.createElement('canvas'); c.width = 640; c.height = 360;
+  const r = new THREE.WebGLRenderer({ canvas: c, antialias: true, preserveDrawingBuffer: true });
+  r.setPixelRatio(1); r.setSize(640, 360, false);
+  r.outputEncoding = renderer.outputEncoding;  // same look the old main-canvas capture had
+  r.shadowMap.enabled = renderer.shadowMap.enabled; r.shadowMap.type = renderer.shadowMap.type;
+  return (MD._capR = r);
+}
+async function mdCapture() {                   // render POV at capture res -> JPEG blob (async encode)
+  const w = 640, h = 360, r = mdCapRenderer();
+  const hidden = [];
+  const hide = o => { if (o && o.visible) { hidden.push(o); o.visible = false; } };
+  hide(lineMesh); hide(otherMesh); hide(trail.line); hide(texPlane);
+  scene.traverse(o => { if (o.isSprite) hide(o); });
+  const K = posePovCam_K(w, h);
+  try {
+    posePovCam(capCam, w / h);
+    car.visible = false; axleMarks.visible = false;
+    r.render(scene, capCam);
+  } finally {
+    car.visible = egoVisible();
+    axleMarks.visible = el('oAxle').checked;
+    hidden.forEach(o => { o.visible = true; });
+  }
+  const blob = await new Promise(res => r.domElement.toBlob(res, 'image/jpeg', 0.8));
+  return { blob, K };
+}
+/* reuse the same intrinsics math the exporter uses for the capture camera */
+function posePovCam_K(w, h) {
+  const fx = (w / 2) / Math.tan(THREE.MathUtils.degToRad(S.mount.fov) / 2);
+  return { fx, fy: fx, cx: (w - 1) / 2, cy: (h - 1) / 2,
+           pitch: THREE.MathUtils.degToRad(S.mount.pit), h: S.mount.hei, fwd: S.mount.long };
+}
+let _mdInflight = false;
+async function mdSense() {                     // capture -> POST -> lane fit
+  if (_mdInflight) return;                     // never queue: act on the freshest frame
+  _mdInflight = true;
+  const t0 = performance.now();
+  try {
+    const { blob, K } = await mdCapture();
+    const r = await fetch('/predict?viz=1', { method: 'POST',
+      headers: { 'Content-Type': 'image/jpeg' }, body: blob });
+    const pl = await r.json();
+    if (!r.ok) throw new Error(pl.error || 'HTTP ' + r.status);   // server-side failure, not a lane result
+    MD.ping = performance.now() - t0;
+    MD.fails = 0;
+    MD.dbg = pl;
+    // ---- unproject (README pinhole math) and fit ----
+    // car frame: +x forward, +y LEFT (matches dataset.json note). Image +u is right,
+    // so y_left = -lam * a where a = (u-cx)/fx.
+    const p = K.pitch, cp = Math.cos(p), sp = Math.sin(p);
+    const fit = uv => {
+      const xs = [], ys = [];
+      for (const [u, v] of uv) {
+        const b = (v - K.cy) / K.fy;
+        const down = sp + b * cp;
+        if (down <= 1e-3) continue;            // ray above the horizon
+        const lam = K.h / down;
+        xs.push(lam * (cp - b * sp) + K.fwd);
+        ys.push(-lam * (u - K.cx) / K.fx);
+      }
+      return [xs, ys];
+    };
+    const xRef = 0.45;                         // nearest station a low mount observes
+    const evAt = (c, xs, x) => {
+      const lo = Math.min(...xs), hi = Math.max(...xs);
+      const xe = Math.max(lo, Math.min(hi, x));  // never extrapolate past the visible span
+      return c.reduce((s, k, i) => s + k * Math.pow(xe, c.length - 1 - i), 0);
+    };
+    // one fit per class: lateral at xRef, at xFar, curvature, far end of the visible span
+    const cls = {};
+    for (const name of ['outer', 'inner', 'centre']) {
+      const [xs, ys] = fit(pl[name] || []);
+      if (xs.length < 4) continue;
+      const c = polyfit(xs, ys, xs.length >= 12 ? 2 : 1);
+      const hi = Math.max(...xs);
+      const xFar = Math.min(xRef + 0.30, Math.max(xRef + 0.05, hi));
+      cls[name] = { y0: evAt(c, xs, xRef), y1: evAt(c, xs, xFar), xFar, n: xs.length,
+                    curv: c.length >= 3 ? 2 * c[0] : 0 };
+    }
+    MD.edgeY = { outer: cls.outer?.y0, inner: cls.inner?.y0, centre: cls.centre?.y0 };
+    const W = WIDTH[0];
+    let est = null;
+    const O = cls.outer, I = cls.inner, C = cls.centre;
+    const sepOk = O && I && Math.abs(O.y0 - I.y0) > 0.75 * W && Math.abs(O.y0 - I.y0) < 1.3 * W;
+    if (sepOk) {
+      MD.outerSide = Math.sign(O.y0 - I.y0);   // remember which side the outer edge sits on
+      const xF = Math.min(O.xFar, I.xFar);
+      est = { src: 'pair', c0: 0.5 * (O.y0 + I.y0), xF,
+              c1: 0.5 * (O.y1 + I.y1), curv: 0.5 * (O.curv + I.curv) };
+    } else if ((O || I) && MD.outerSide) {
+      // single edge: lane centre sits W/2 toward the other edge
+      const E = O && (!I || O.n >= I.n) ? O : I;
+      const toward = (E === O ? -MD.outerSide : MD.outerSide) * 0.5 * W;
+      est = { src: E === O ? 'outer' : 'inner', c0: E.y0 + toward, c1: E.y1 + toward,
+              xF: E.xFar, curv: E.curv };
+    } else if (C && C.n >= 8) {               // centre_line is the noisiest class: last resort
+      est = { src: 'centre', c0: C.y0, c1: C.y1, xF: C.xFar, curv: C.curv };
+    }
+    MD.rows = (O?.n || 0) + (I?.n || 0) + (C?.n || 0);
+    if (est) {
+      MD.lat = est.c0;                                       // + = lane centre left of car
+      MD.head = Math.atan2(est.c1 - est.c0, est.xF - xRef);  // + = steer left
+      MD.curv = est.curv; MD.src = est.src; MD.valid = true; MD.fitT = performance.now();
+      if (MD.on) mdControl();                  // the driver reacts only when it sees something
+    } else {
+      MD.valid = false; MD.src = 'none';
+    }
+  } catch (e) { MD.fails++; MD.valid = false; MD.dbg = { error: String(e) }; }
+  updateInfer();
+  _mdInflight = false;
+}
+
+/* ---- corner inference view: paint the server's segmentation overlay thumbnail ---- */
+const INFER_LEGEND = '<span class="lg" style="background:rgb(90,220,60)"></span>outer' +
+  '<span class="lg" style="background:rgb(40,150,255)"></span>inner' +
+  '<span class="lg" style="background:rgb(255,160,60)"></span>centre';
+function updateInfer() {
+  if (!inferBox || inferBox.classList.contains('hide')) return;
+  const d = MD.dbg;
+  if (d && d.viz) inferImg.src = 'data:image/jpeg;base64,' + d.viz;   // keep the last good frame on error
+  let st;
+  if (d && d.error) st = '<span style="color:var(--bad)">' + String(d.error).replace(/</g, '&lt;').slice(0, 90) + '</span>';
+  else st = '<span style="color:' + (MD.valid ? 'var(--race)' : 'var(--dim)') + '">' +
+    (MD.valid ? 'tracking' : 'no lane fit') + ' · ' + MD.rows + ' rows · ' + MD.ping.toFixed(0) + ' ms · ' + (MD.src || '—') + '</span>';
+  inferCap.innerHTML = st + INFER_LEGEND;
+}
+
+/* ---------- model driver: physics + control + wiring ------------------- */
+const el = id => document.getElementById(id);
+function polyfit(xs, ys, deg) {                // least squares via normal equations
+  const n = xs.length, m = deg + 1;
+  const A = [], b = [];
+  for (let r = 0; r < m; r++) {
+    A.push(new Array(m));
+    for (let c = 0; c < m; c++) {
+      let s = 0;
+      for (let i = 0; i < n; i++) s += Math.pow(xs[i], (deg - c) + (deg - r));
+      A[r][c] = s;
+    }
+  }
+  for (let r = 0; r < m; r++) {
+    let s = 0;
+    for (let i = 0; i < n; i++) s += ys[i] * Math.pow(xs[i], deg - r);
+    b.push(s);
+  }
+  for (let c = 0; c < m; c++) {
+    let piv = c;
+    for (let r = c + 1; r < m; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
+    [A[c], A[piv]] = [A[piv], A[c]]; [b[c], b[piv]] = [b[piv], b[c]];
+    if (Math.abs(A[c][c]) < 1e-12) return null;
+    for (let r = c + 1; r < m; r++) {
+      const f = A[r][c] / A[c][c];
+      for (let k = c; k < m; k++) A[r][k] -= f * A[c][k];
+      b[r] -= f * b[c];
+    }
+  }
+  const x = new Array(m).fill(0);
+  for (let r = m - 1; r >= 0; r--) {
+    let s = b[r];
+    for (let k = r + 1; k < m; k++) s -= A[r][k] * x[k];
+    x[r] = s / A[r][r];
+  }
+  return x;
+}
+
+function mdPhysics(dt) {                       // planar Ackermann bicycle model
+  const L = CAR.wb, maxSteer = THREE.MathUtils.degToRad(31);
+  MD.v += ((MD.cmdV ?? MD.v) - MD.v) * (1 - Math.exp(-dt / 0.25));   // drivetrain lag, time-based
+  const st = Math.max(-maxSteer, Math.min(maxSteer, MD.steer));
+  if (Math.abs(st) > 1e-4) MD.yaw += (MD.v / (L / Math.tan(st))) * dt;
+  MD.x += MD.v * Math.cos(MD.yaw) * dt;
+  MD.z += -MD.v * Math.sin(MD.yaw) * dt;       // world z runs opposite the yaw sine
+  MD.v = Math.max(0, MD.v);
+}
+
+/* Driver: runs once per perception result and sets a command that is HELD until the
+   next result. The sim never waits for it; a late or missing result means the car keeps
+   driving on the old command and may leave the lane. */
+function mdControl() {
+  const G = MD.gain || (MD.gain = { mode: "pp", k: 1.6, kh: 0.5, ff: 0, vmax: Infinity, vmin: 0.45 });
+  const curvR = Math.abs(MD.curv) > 1e-3 ? 1 / Math.abs(MD.curv) : 50;
+  let target = Math.min(S.vmax, G.vmax, Math.sqrt(S.alat * Math.max(0.15, curvR)));
+  // big perceived error -> slow down so the correction lands before the edge
+  target *= 1 / (1 + 2.5 * Math.abs(MD.lat) + 1.5 * Math.abs(MD.head));
+  target = Math.max(G.vmin, target);
+  const ff = Math.atan(CAR_L_MD * MD.curv) * G.ff;      // curvature feedforward (bicycle)
+  let err;
+  if (G.mode === 'pp') {
+    // pure pursuit on the fitted lane-centre point at xRef (+ rear-axle offset)
+    const xr = 0.45 + CAR_L_MD / 2, ld2 = xr * xr + MD.lat * MD.lat;
+    err = Math.atan(2 * CAR_L_MD * MD.lat / ld2) + G.kh * MD.head + ff;
+  } else {
+    err = MD.head + Math.atan2(G.k * MD.lat, Math.max(MD.v, 0.25)) + ff;
+  }
+  MD.steer = THREE.MathUtils.clamp(err, -THREE.MathUtils.degToRad(31), THREE.MathUtils.degToRad(31));
+  MD.cmdV = target;
+}
+const CAR_L_MD = 0.25;
+
+function mdFreePlace(dt) {                     // place the car from the free pose
+  car.position.set(MD.x, 0, MD.z);
+  car.rotation.y = MD.yaw;
+  const spin = (MD.v * dt) / CAR.wr;
+  car.userData.wheels.forEach(w => {
+    if (w.front) w.knuckle.rotation.y = MD.steer;
+    w.wheel.rotation.z += spin; w.hub.rotation.z += spin;
+  });
+}
+
+/* scoring hooks over the free pose: S.u advances by arc length travelled along the path
+   tangent so checkpoints / violations / finish fire exactly as in the scripted run. */
+function mdBookkeeping() {
+  const i = Math.floor(S.u) % NS;
+  const t = tangentAt(S.path, i, 5);
+  const dx = MD.x - S.path[i].x, dz = MD.z - S.path[i].z;
+  // both vectors are world-space: plain dot product, no car-frame rotation here
+  S.u = Math.max(0, S.u + (dx * t.x + dz * t.z) / S.ds);
+  const near = nearestAny(BASE, MD.x, MD.z);
+  const rel = carFramePoint(near.x, near.z);
+  S.off_now = -rel.left;                       // app convention: + = car left of lane
+  const half = WIDTH[near.i % NS] / 2;
+  S.cover = Math.max(0, Math.min(1, (Math.abs(S.off_now) + CAR.wid / 2 - half) / CAR.wid));
+  while (S.nextCp < S.cpIdx.length && S.u >= S.cpIdx[S.nextCp]) { S.nextCp++; S.cpsHit++; }
+  if (S.u >= NS - 1e-3) { S.u = NS - 1e-4; finish('finish line crossed'); }
+  MD.hist.push([MD.x, MD.z]); if (MD.hist.length > 900) MD.hist.shift();
+}
+
+let _mdSenseT = 0;
+function mdTick(dt) {                          // dt = SIM seconds (wall dt x time scale)
+  if (S.finished) return;
+  const n = Math.max(1, Math.ceil(dt / 0.005)), h = dt / n;   // fixed-size substeps
+  for (let k = 0; k < n && !S.finished; k++) { mdBookkeeping(); mdPhysics(h); }
+  mdFreePlace(dt);
+  if (performance.now() - _mdSenseT > 30) {    // model runs on its own wall-clock cadence
+    _mdSenseT = performance.now();
+    mdSense();                                 // async; results land in MD.lat/head/curv
+  }
+}
+
+el('mdOn').onclick = () => {
+  MD.on = !MD.on;
+  el('mdOn').classList.toggle('on', MD.on);
+  if (MD.on) { mdSyncFromPath(); posePovCam(capCam, 640 / 360); mdCapRenderer().render(scene, capCam); }  // compile shaders before the run
+  el('mdStat').textContent = MD.on
+    ? 'ON — steering from YOLO. Ping / fit rows / errors appear in the HUD.'
+    : 'off — car follows the scripted racing line.';
+};
+el('mdCam').onclick = () => setCam(S.cam === 'pov' ? 'orbit' : 'pov');
+function setInfer(on) {                            // corner segmentation overlay on/off
+  inferBox.classList.toggle('hide', !on);
+  el('mdInfer').checked = on;
+  if (on) updateInfer();
+}
+el('mdInfer').addEventListener('change', e => setInfer(e.target.checked));
+el('inferX').onclick = () => setInfer(false);
+
+const hud = el('hud'), bar = document.querySelector('#bar i');
+const inferBox = el('infer'), inferImg = el('inferImg'), inferCap = el('inferCap');
+let hudMin = false;                                 // telemetry HUD collapsed to one line
+hud.addEventListener('click', e => {                // HUD is rebuilt each frame -> delegate
+  if (e.target.id === 'hudMinBtn') { hudMin = !hudMin; renderHUD(); }
+});
+let last = performance.now();
+
+function lateralState() {
+  const i = Math.floor(S.u) % NS;
+  const s = i * S.ds;
+  const noise = S.noise * Math.sin(s * 5.1) * Math.cos(s * 0.37 + 1.1);
+  const off = (S.off[i] || 0) + noise;
+  const half = WIDTH[i] / 2;
+  const cover = Math.max(0, Math.min(1, (Math.abs(off) + CAR.wid / 2 - half) / CAR.wid));
+  return { i, off, cover };
+}
+function step(dt) {
+  if (!S.playing || S.finished) return;
+  if (S.hold > 0) { S.hold -= dt * S.tscale; return; }
+  S.u += speedAt(Math.floor(S.u) % NS) * dt * S.tscale / S.ds;
+  S.t += dt * S.tscale;
+  if (S.cool > 0) S.cool -= dt * S.tscale;
+  while (S.nextCp < S.cpIdx.length && S.u >= S.cpIdx[S.nextCp]) { S.nextCp++; S.cpsHit++; }
+
+  const L = lateralState();
+  S.off_now = L.off; S.cover = L.cover;
+  if (S.cool <= 0 && L.cover >= (S.mode === 'race' ? 0.30 : 0.50)) violation('keluar jalur', 0.8);
+  if (S.finished) return;
+  if (S.t + S.pen >= S.stage) finish('stage limit reached, car stopped by rule III.D.1.5');
+  else if (S.u >= NS) { S.u = NS - 1e-4; finish('finish line crossed'); }
+}
+function violation(what, coef) {
+  S.viol++;
+  const p = coef * S.stage / S.ncp;
+  S.pen += p;
+  S.penList.push({ what, t: S.t, add: p });
+  if (S.viol > 3) { finish('4th violation — attempt ended'); return; }
+  S.u = S.nextCp > 0 ? S.cpIdx[S.nextCp - 1] : 0;   // back to the last checkpoint
+  if (MD.on) mdSyncFromPath();                       // teleport the free pose too
+  S.hold = 0.9; S.cool = 1.6;
+}
+function finish(why) {
+  S.finished = true; S.playing = false; S.why = why;
+  el('play').textContent = 'Run'; el('play').classList.remove('on');
+  const sc = score();
+  if (S.best === null || sc.total > S.best) S.best = sc.total;
+}
+function score() {
+  const Tt = S.t + S.pen, frac = Math.max((S.stage - Tt) / S.stage, 0);
+  const SAR = (1 + frac) * S.cpsHit;
+  const SARC = S.mode === 'chal' ? ((1 + frac) * S.cpsHit) / (2 * S.ncp) : 0;
+  const STP = S.ack ? 0.25 : 0;
+  return { SAR, SARC, STP, frac, total: SAR * (1 + STP + SARC) };
+}
+function renderHUD() {
+  const i = Math.floor(S.u) % NS, sc = score(), ec = edgeClearance(i);
+  const tag = S.mode === 'race'
+    ? '<span class="mode-tag m-race">AUTONOMOUS RACE</span>'
+    : '<span class="mode-tag m-chal">RACE CHALLENGE</span>';
+  const state = S.hold > 0 ? 'RELOCATING' : S.playing ? 'RUNNING' : S.finished ? 'OVER' : 'READY';
+  const pen = S.penList.slice(-3).map(p =>
+    `+${p.add.toFixed(1)}s ${p.what} <span class="k">@${p.t.toFixed(1)}s</span>`).join('<br>');
+  const camLine = (S.cam === 'pov' || S.pip)
+    ? `<div><span class="k">cam</span><span class="v">${S.mount.hei.toFixed(2)} m / ${S.mount.pit.toFixed(0)}&deg; / ${S.mount.fov.toFixed(0)}&deg; @ ${S.anchor}</span></div>` : '';
+  const minBtn = `<span class="hudmin" id="hudMinBtn" title="Minimize telemetry (T)">${hudMin ? '\u25A2' : '\u2014'}</span>`;
+  if (hudMin) {                                    // collapsed: mode + state + clock only
+    hud.innerHTML =
+      `${tag}${minBtn}<span class="k" style="float:right">${state}</span>
+       <div class="big" style="margin-top:4px">${(S.t + S.pen).toFixed(2)}<span class="k" style="font-size:12px"> s</span></div>`;
+    bar.style.width = (S.u / NS * 100).toFixed(1) + '%';
+    return;
+  }
+  hud.innerHTML =
+    `${tag}${minBtn}<span class="k" style="float:right">${state}</span>
+     <div class="big" style="margin-top:6px">${(S.t + S.pen).toFixed(2)}<span class="k" style="font-size:12px"> s</span></div>
+     <div><span class="k">clock + penalty</span><span class="v">${S.t.toFixed(2)} + ${S.pen.toFixed(1)}</span></div>
+     <hr>
+     <div><span class="k">speed</span><span class="v">${speedAt(i).toFixed(2)} m/s</span></div>
+     <div><span class="k">steer angle</span><span class="v">${S.steerDeg.toFixed(1)}&deg;</span></div>
+     <div><span class="k">lateral offset</span><span class="v">${S.off_now.toFixed(3)} m</span></div>
+     <div><span class="k">heading error</span><span class="v">${headingErr(i).toFixed(1)}&deg;</span></div>
+     <div><span class="k">car outside line</span><span class="v" style="color:${S.cover > 0.05 ? 'var(--bad)' : 'var(--ink)'}">${(S.cover * 100).toFixed(0)} %</span></div>
+     <div><span class="k">local radius</span><span class="v">${S.R[i].toFixed(2)} m</span></div>
+     <div><span class="k">axle clearance</span><span class="v" style="color:${ec.front < 0.02 ? 'var(--bad)' : 'var(--ink)'}">F ${ec.front.toFixed(3)} / R ${ec.rear.toFixed(3)}</span></div>
+     <div><span class="k">line distance L/R</span><span class="v">${ec.left.toFixed(3)} / ${ec.right.toFixed(3)}</span></div>
+     ${camLine}
+     <hr>
+     <div><span class="k">progress</span><span class="v">${(S.u * S.ds).toFixed(2)} / ${S.loop.toFixed(2)} m</span></div>
+     <div><span class="k">checkpoints</span><span class="v">${S.cpsHit} / ${S.ncp}</span></div>
+     <div><span class="k">violations</span><span class="v" style="color:${S.viol ? 'var(--bad)' : 'var(--ink)'}">${S.viol} / 3</span></div>
+     <hr>
+     <div><span class="k">S_AR</span><span class="v">${sc.SAR.toFixed(2)}</span></div>
+     ${S.mode === 'chal' ? `<div><span class="k">S_ARC gain</span><span class="v">&times;${(1 + sc.SARC).toFixed(3)}</span></div>` : ''}
+     <div><span class="k">STP ackermann</span><span class="v">${sc.STP.toFixed(2)}</span></div>
+     <div style="margin-top:2px"><span class="k">TOTAL</span><span class="v" style="color:var(--acc)">${sc.total.toFixed(2)}</span></div>
+     <div><span class="k">best this session</span><span class="v">${S.best === null ? '—' : S.best.toFixed(2)}</span></div>
+     ${pen ? `<hr><div style="color:var(--bad);font-size:11px;line-height:1.5">${pen}</div>` : ''}
+     ${MD.on ? `<hr>
+       <div><span class="k">model driver</span><span class="v" style="color:${MD.fails ? 'var(--bad)' : 'var(--race)'}">${MD.fails ? 'ERR ' + MD.fails : 'ok'}</span></div>
+       ${MD.fails && MD.dbg?.error ? `<div style="color:var(--bad);font-size:11px;line-height:1.4">${String(MD.dbg.error).replace(/</g, '&lt;').slice(0, 160)}${/Failed to fetch|NetworkError/.test(MD.dbg.error) ? ' (is server.py running? open http://127.0.0.1:8765/)' : ''}</div>` : ''}
+       <div><span class="k">ping / fit rows</span><span class="v">${MD.ping.toFixed(0)} ms / ${MD.rows} ${MD.src || ""}</span></div>
+       <div><span class="k">lat / head fit</span><span class="v">${(MD.lat * 100).toFixed(1)} cm / ${(MD.head * 57.3).toFixed(1)}&deg;</span></div>` : ''}
+     ${S.finished ? `<hr><div class="k" style="color:var(--bad)">${S.why}</div>` : ''}`;
+  bar.style.width = (S.u / NS * 100).toFixed(1) + '%';
+}
+
+function placeCar(dt) {
+  const i = Math.floor(S.u) % NS, p = S.path[i], t = tangentAt(S.path, i, 5);
+  car.position.set(p.x, 0, p.z);
+  car.rotation.y = Math.atan2(-t.z, t.x);
+  const R = Math.max(0.12, S.R[i]), dir = S.sgn[i] > 0 ? 1 : -1;   // +1 = turning left
+  const base = Math.atan2(CAR.wb, R);
+  const aIn = Math.min(0.55, base * 1.14), aOut = Math.min(0.55, base * 0.88);
+  S.steerDeg = THREE.MathUtils.radToDeg(base);
+  const spin = (speedAt(i) * dt * S.tscale) / CAR.wr;
+  car.userData.wheels.forEach(w => {
+    if (w.front) {
+      const inside = (w.side === -1) === (dir > 0);
+      const a = S.ack ? (inside ? aIn : aOut) : base;
+      w.knuckle.rotation.y = dir * a;
+    }
+    w.wheel.rotation.z += spin; w.hub.rotation.z += spin;
+  });
+  car.rotation.z = 0;
+  if (document.getElementById('oTrail').checked && S.playing) {
+    const h = trail.head;
+    trail.pos[h * 3] = p.x; trail.pos[h * 3 + 1] = 0.012; trail.pos[h * 3 + 2] = p.z;
+    trail.head = (h + 1) % trail.n; trail.count = Math.min(trail.count + 1, trail.n);
+    trail.line.geometry.setDrawRange(0, trail.count);
+    trail.line.geometry.attributes.position.needsUpdate = true;
+  }
+}
+
+/* ---------- dataset recorder ------------------------------------------ */
+const CSV_COLS = ['frame', 't_s', 'state', 'mode', 'x_m', 'z_m', 'yaw_rad', 'speed_mps',
+  'steer_deg', 'radius_m', 'lane_offset_m', 'heading_err_deg', 'cover_pct', 'half_width_m',
+  'left_edge_m', 'right_edge_m', 'front_cl_m', 'rear_cl_m', 'dist_m', 'cp_done', 'viol',
+  'pen_s', 'score', 'next_cp_id', 'next_cp_ahead_m', 'next_cp_lat_m', 'obs_min_gap_m'];
+const REC = { active: false, done: false, n: 0, frames: [], labels: [], annos: [],
+  rows: [], tscale: 2, why: '' };
+const _t = new THREE.Vector3();
+const r3 = v => Math.round(v * 1000) / 1000;
+
+function stat(msg, cls) {
+  const s = el('recStat');
+  s.textContent = msg; s.className = cls || '';
+  el('rBar').value = REC.active ? REC.n / S.cap.max : (REC.done ? 1 : 0);
+  el('rBar').style.display = (REC.active || REC.done) ? 'block' : 'none';
+}
+function carFramePoint(wx, wz) {   // world -> car frame; +fwd, +left
+  // the car's local +z is its RIGHT side (forward x up), so left is its negation
+  const y = car.rotation.y, c = Math.cos(y), s = Math.sin(y);
+  const dx = wx - car.position.x, dz = wz - car.position.z;
+  return { fwd: dx * c - dz * s, left: -(dx * s + dz * c) };
+}
+function bodyCorners() {
+  const y = car.rotation.y, c = Math.cos(y), s = Math.sin(y), hl = CAR.len / 2, hw = CAR.wid / 2;
+  return [[hl, hw, 'FL'], [hl, -hw, 'FR'], [-hl, hw, 'RL'], [-hl, -hw, 'RR']]
+    .map(([f, l, n]) => ({ x: car.position.x + f * c - l * s,
+                            z: car.position.z - f * s - l * c, n }));
+}
+function nearestOn(P, x, z, span, hint) {
+  const n = P.length; let bi = hint, bd = Infinity;
+  for (let o = -span; o <= span; o++) {
+    const i = ((hint + o) % n + n) % n;
+    const dx = P[i].x - x, dz = P[i].z - z, d = dx * dx + dz * dz;
+    if (d < bd) { bd = d; bi = i; }
+  }
+  return { i: bi, d: Math.sqrt(bd), x: P[bi].x, z: P[bi].z };
+}
+/* OUTER / INNER are resampled by their OWN arc length, and the outer contour is about
+   16 % longer than the centreline, so equal indices are not the same station — a windowed
+   search would grab a point metres away. Those two arrays always get a full search. */
+function nearestAny(P, x, z) {
+  let bi = 0, bd = Infinity;
+  for (let i = 0; i < P.length; i++) {
+    const dx = P[i].x - x, dz = P[i].z - z, d = dx * dx + dz * dz;
+    if (d < bd) { bd = d; bi = i; }
+  }
+  return { i: bi, d: Math.sqrt(bd), x: P[bi].x, z: P[bi].z };
+}
+function headingErr(idx) {                        // lane chord vs car heading, + = lane left
+  const k = 20;
+  const pa = carFramePoint(BASE[(idx - k + NS) % NS].x, BASE[(idx - k + NS) % NS].z);
+  const pb = carFramePoint(BASE[(idx + k) % NS].x, BASE[(idx + k) % NS].z);
+  return THREE.MathUtils.radToDeg(Math.atan2(pb.left - pa.left, pb.fwd - pa.fwd));
+}
+function edgeClearance(idx) {
+  const o = nearestAny(OUTER, car.position.x, car.position.z);
+  const inn = nearestAny(INNER, car.position.x, car.position.z);
+  const outerLeft = carFramePoint(o.x, o.z).left >= carFramePoint(inn.x, inn.z).left;
+  const half = WIDTH[idx] / 2;
+  let front = Infinity, rear = Infinity;
+  const per = bodyCorners().map(cp => {
+    const q = nearestOn(BASE, cp.x, cp.z, 26, idx);
+    const lat = -carFramePoint(q.x, q.z).left;      // corner's signed offset, + = left
+    const cl = Math.min(half + lat, half - lat);
+    if (cp.n[0] === 'F') front = Math.min(front, cl); else rear = Math.min(rear, cl);
+    return { corner: cp.n, lat_m: r3(lat), clear_m: r3(cl) };
+  });
+  return { left: outerLeft ? o.d : inn.d, right: outerLeft ? inn.d : o.d, half,
+           front, rear, per };
+}
+function obsGap() {
+  let best = -1;
+  S.obstacles.forEach(o => {
+    if (o.x === undefined) return;
+    const r = carFramePoint(o.x, o.z);
+    if (r.fwd < -0.1 || r.fwd > 2.4) return;
+    const gap = Math.abs(r.left) - o.r;
+    if (best < 0 || gap < best) best = gap;
+  });
+  return best;
+}
+function telemetryRow() {
+  const idx = Math.floor(S.u) % NS, e = edgeClearance(idx);
+  const cpK = S.nextCp < S.cpIdx.length ? S.nextCp : null;
+  const cpP = cpK === null ? BASE[0] : BASE[S.cpIdx[cpK]];
+  const cpR = carFramePoint(cpP.x, cpP.z);
+  return {
+    frame: REC.n + 1, t_s: r3(S.t), state: S.hold > 0 ? 'relocating'
+      : S.finished ? 'over' : S.playing ? 'running' : 'ready',
+    mode: S.mode, x_m: r3(car.position.x), z_m: r3(car.position.z), yaw_rad: r3(car.rotation.y),
+    speed_mps: r3(speedAt(idx)), steer_deg: r3(S.steerDeg), radius_m: r3(S.R[idx]),
+    lane_offset_m: r3(S.off_now), heading_err_deg: r3(headingErr(idx)),
+    cover_pct: r3(S.cover * 100), half_width_m: r3(e.half),
+    left_edge_m: r3(e.left), right_edge_m: r3(e.right),
+    front_cl_m: r3(e.front), rear_cl_m: r3(e.rear),
+    dist_m: r3(S.u * S.ds), cp_done: S.cpsHit, viol: S.viol, pen_s: r3(S.pen),
+    score: r3(score().total),
+    next_cp_id: cpK === null ? 'FINISH' : 'CP' + (cpK + 1),
+    next_cp_ahead_m: r3(cpR.fwd), next_cp_lat_m: r3(cpR.left),
+    obs_min_gap_m: r3(obsGap())
+  };
+}
+function intrinsicsOf(w, h) {
+  const fx = (w / 2) / Math.tan(THREE.MathUtils.degToRad(S.mount.fov) / 2);
+  return { w, h, fx: r3(fx), fy: r3(fx), cx: (w - 1) / 2, cy: (h - 1) / 2,
+    hfov: S.mount.fov, vfov: r3(vfovFrom(S.mount.fov, w / h)) };
+}
+function projPoint(x, z, K) {                     // world -> pixel + depth, null if unseen
+  _t.set(x, 0, z); capCam.worldToLocal(_t);
+  const X = _t.x, Y = -_t.y, Z = -_t.z;           // CV frame: x right, y down, z forward
+  if (Z < 0.08) return null;
+  const u = K.cx + K.fx * X / Z, v = K.cy + K.fy * Y / Z;
+  if (u < -30 || u > K.w + 30 || v < -30 || v > K.h + 30) return null;
+  return [+u.toFixed(1), +v.toFixed(1), +Z.toFixed(3)];
+}
+function projPoly(P, K, stride) {
+  const pts = [];
+  for (let i = 0; i < P.length; i += stride) {
+    const q = projPoint(P[i].x, P[i].z, K);
+    if (q) pts.push(q);
+  }
+  return pts;
+}
+function annoPoints(K) {
+  const out = [];
+  const push = (cls, id, x, z, r) => {
+    const rel = carFramePoint(x, z);
+    if (rel.fwd < -1.2 || rel.fwd > 5) return;
+    const o = { cls, id, ahead_m: r3(rel.fwd), right_m: r3(-rel.left),
+                depth_m: r3(Math.hypot(rel.fwd, rel.left)) };
+    if (r !== undefined) o.radius_m = r3(r);
+    const q = projPoint(x, z, K);
+    if (q) { o.u = q[0]; o.v = q[1]; } else o.in_frame = false;
+    out.push(o);
+  };
+  S.obstacles.forEach((o, k) => push('obstacle', 'O' + (k + 1), o.x, o.z, o.r));
+  S.cpIdx.forEach((idx, k) => push('checkpoint', 'CP' + (k + 1), BASE[idx].x, BASE[idx].z));
+  push('start_finish', 'SF', BASE[0].x, BASE[0].z);
+  return out;
+}
+function annotationObj(K) {
+  const idx = Math.floor(S.u) % NS;
+  return {
+    frame: REC.n + 1, t_s: r3(S.t), intrinsics: K,
+    pose: { x_m: r3(car.position.x), z_m: r3(car.position.z), yaw_rad: r3(car.rotation.y) },
+    truth: { lane_offset_m: r3(S.off_now), heading_err_deg: r3(headingErr(idx)),
+             radius_m: r3(S.R[idx]), speed_mps: r3(speedAt(idx)), steer_deg: r3(S.steerDeg),
+             cover_pct: r3(S.cover * 100) },
+    lines: [
+      { cls: 'outer_edge', pts: projPoly(OUTER, K, 4) },
+      { cls: 'inner_edge', pts: projPoly(INNER, K, 4) },
+      { cls: 'centre_dash', pts: projPoly(BASE, K, 4) }
+    ],
+    points: annoPoints(K)
+  };
+}
+function segPass() {
+  const swapped = [], hidden = [];
+  scene.traverse(o => {
+    if (o.isSprite || o.isLine) { hidden.push([o, o.visible]); o.visible = false; return; }
+    if (!o.isMesh) return;
+    if (o.userData.seg === HIDE) { hidden.push([o, o.visible]); o.visible = false; }
+    else if (o.userData.seg) { swapped.push([o, o.material]); o.material = segMat[o.userData.seg]; }
+  });
+  const bg = scene.background;
+  scene.background = null;
+  renderer.setClearColor(SEG_ID.background, 1);
+  renderer.render(scene, capCam);
+  const url = canvas.toDataURL('image/png');
+  scene.background = bg;
+  renderer.setClearColor(0x0d0f12, 1);
+  swapped.forEach(p => { p[0].material = p[1]; });
+  hidden.forEach(p => { p[0].visible = p[1]; });
+  return url;
+}
+/* A capture frame is supposed to be what a camera sees: physical paint and physical
+   objects only. Simulator overlays (racing line, alternate path, motion trail) and the
+   floating CP/O label sprites are hidden for the capture, and restored straight after.
+   The on-screen POV still shows whatever the Overlays panel says. */
+function captureFrame() {
+  const w = S.cap.w, h = S.cap.h;
+  const hidden = [];
+  const hide = o => { if (o && o.visible) { hidden.push(o); o.visible = false; } };
+  hide(lineMesh); hide(otherMesh); hide(trail.line); hide(texPlane);
+  scene.traverse(o => { if (o.isSprite) hide(o); });
+  renderer.setPixelRatio(1);
+  renderer.setSize(w, h, false);
+  posePovCam(capCam, w / h);
+  car.visible = S.ego;
+  axleMarks.visible = false;
+  let url, png = null;
+  try {
+    renderer.render(scene, capCam);
+    url = canvas.toDataURL('image/jpeg', S.cap.q);
+    if (S.cap.seg) png = segPass();
+  } finally {
+    car.visible = true;
+    hidden.forEach(o => { o.visible = true; });
+  }
+  REC.frames.push(url);
+  if (png) REC.labels.push(png);
+  REC.rows.push(telemetryRow());
+  if (S.cap.ann) REC.annos.push(JSON.stringify(annotationObj(intrinsicsOf(w, h))));
+  REC.n++;
+}
+function startRecord() {
+  resetRun();
+  S.playing = true;
+  REC.active = true; REC.done = false; REC.n = 0;
+  REC.frames = []; REC.labels = []; REC.annos = []; REC.rows = [];
+  REC.tscale = S.tscale; S.tscale = 1;
+  stat('recording ' + S.mode + ' at ' + S.cap.fps + ' fps, cap ' + S.cap.max + ' frames…');
+}
+function recTick() {
+  const dt = 1 / S.cap.fps, t0 = performance.now();
+  while (REC.active && performance.now() - t0 < 55) {
+    step(dt); placeCar(dt); captureFrame();
+    if (S.finished) stopRecord('lap ended: ' + S.why);
+    else if (REC.n >= S.cap.max) stopRecord('max frames reached');
+    if (REC.active && REC.n % 20 === 0) stat('captured ' + REC.n + ' frames, t = ' +
+      S.t.toFixed(2) + ' s…');
+  }
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  vw = -1; vh = -1;                            // force resize() to restore the display size
+  car.visible = true; axleMarks.visible = el('oAxle').checked;
+}
+function stopRecord(why) {
+  REC.active = false; REC.done = true; REC.why = why;
+  S.playing = false; S.tscale = REC.tscale;
+  el('play').textContent = 'Run'; el('play').classList.remove('on');
+  const kb = (REC.frames.reduce((a, s) => a + s.length, 0) +
+              REC.labels.reduce((a, s) => a + s.length, 0)) / 1024;
+  stat(REC.n + ' frames captured — ' + why + '\n' +
+       (kb / 1024).toFixed(1) + ' MB held in memory (' + (S.cap.seg ? 'rgb + labels' : 'rgb') +
+       '). Press Export ZIP to write the archive.', 'ok');
+}
+function datasetJson() {
+  const K = intrinsicsOf(S.cap.w, S.cap.h);
+  const route = S.mode === 'race' ? 'painted centreline, no avoidance'
+    : S.ncp + ' cones alternating sides, avoidance sigma ' + S.sig + ' m, detour ' +
+      ((S.loop / LOOP - 1) * 100).toFixed(1) + ' %';
+  return {
+    source: 'arena-3d simulator — KSTI 2026 Mini Autonomous Vehicle',
+    map: M.source, generated_at: new Date().toISOString(),
+    mode: S.mode, frames: REC.n, capture_fps: S.cap.fps,
+    sim: { vmax_mps: S.vmax, alat_mps2: S.alat, line_noise_m: S.noise, checkpoints: S.ncp,
+      avoidance_sigma_m: S.sig, stage_limit_s: S.stage, ackermann: S.ack, route,
+      loop_length_m: r3(S.loop), samples: NS, dt_s: r3(1 / S.cap.fps) },
+    car: { length_m: CAR.len, width_m: CAR.wid, height_m: CAR.hgt, wheelbase_m: CAR.wb,
+      track_width_m: CAR.tw, wheel_radius_m: CAR.wr,
+      limits_m: { length: 0.6, width: 0.4, height: 0.45, wheelbase: [0.16, 0.55], track: [0.13, 0.35] },
+      off_track_rule: S.mode === 'race' ? 0.30 : 0.50 },
+    camera: { anchor: S.anchor, mount: { height_m: r3(S.mount.hei), pitch_deg: S.mount.pit,
+      forward_from_anchor_m: r3(S.mount.long), lateral_m: r3(S.mount.lat),
+      hfov_deg: S.mount.fov }, intrinsics: K,
+      note: 'CV convention: x right, y down, z forward. Car frame +x forward, +y left.' },
+    track: { px_per_m: M.px_per_m, loop_length_m: M.loop_length_m,
+      nominal_width_m: M.nominal_width_m, width_min_m: M.width_min_m,
+      width_max_m: M.width_max_m, min_radius_m: M.min_radius_m,
+      guidebook_radius_min_m: 1.5, frame: 'origin = loop centre, x = map +x, z = map +y, y up' },
+    class_ids: SEG_ID,
+    label_encoding: 'labels/*.png is grayscale-valued: each class writes its id into R, G and B. '
+      + 'Ids are spaced 20 apart and pre-compensated for the sRGB output transfer, so read a '
+      + 'pixel with the nearest-id rule rather than equality - antialiased boundaries blend.',
+    files: { rgb: 'frames/', labels: S.cap.seg ? 'labels/' : null,
+      annotations: S.cap.ann ? 'annotations.jsonl' : null,
+      telemetry: 'telemetry.csv', track: 'track/track_data.json' },
+    columns: CSV_COLS,
+    caveats: 'perfect renders: no motion blur, rolling shutter, exposure change, glare, slip '
+      + 'or vibration. Checkpoint and obstacle layout are invented by the simulator; the '
+      + 'sample lintasan radii (min 0.46 m) contradict the stated 1.5 m minimum.'
+  };
+}
+function datasetEntries() {
+  const e = [], enc = new TextEncoder();
+  const put = (name, str) => e.push({ name, data: enc.encode(str) });
+  const zs = window.zipStore;
+  const rows = [CSV_COLS.join(',')];
+  REC.rows.forEach(r => rows.push(CSV_COLS.map(c => {
+    const v = r[c]; return v === undefined || v === null ? '' : v;
+  }).join(',')));
+  put('telemetry.csv', rows.join('\n') + '\n');
+  if (S.cap.ann) put('annotations.jsonl', REC.annos.join('\n') + '\n');
+  REC.frames.forEach((u, i) => e.push({ name: 'frames/' + String(i + 1).padStart(6, '0') + '.jpg',
+    data: zs.dataUrlToU8(u) }));
+  if (S.cap.seg) REC.labels.forEach((u, i) => e.push({
+    name: 'labels/' + String(i + 1).padStart(6, '0') + '.png', data: zs.dataUrlToU8(u) }));
+  put('dataset.json', JSON.stringify(datasetJson(), null, 2));
+  put('track/track_data.json', JSON.stringify(T));
+  put('README_DATASET.md', window.DATASET_ASSETS.md);
+  put('code/baseline_line_follower.py', window.DATASET_ASSETS.py);
+  return e;
+}
+function exportZip() {
+  if (!REC.n) { stat('nothing captured yet — press Record lap first', 'warn'); return; }
+  stat('packing ' + REC.n + ' frames (' + REC.frames.length + ' rgb, ' +
+       REC.labels.length + ' labels)…');
+  setTimeout(() => {
+    try {
+      const blob = window.zipStore.makeBlob(datasetEntries());
+      const a = document.createElement('a');
+      const nm = 'ksti-arena3d-' + S.mode + '-' + REC.n + 'f-' +
+        S.cap.w + 'x' + S.cap.h + '.zip';
+      a.href = URL.createObjectURL(blob); a.download = nm;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+      stat('wrote ' + nm + '  (' + (blob.size / 1048576).toFixed(1) + ' MB, ' +
+        REC.n + ' frames, ' + (REC.labels.length ? 'rgb + labels + ' : '') +
+        'telemetry + annotations). Check your Downloads folder.', 'ok');
+    } catch (err) {
+      stat('pack failed: ' + err.message, 'warn');
+    }
+  }, 60);
+}
+
+function renderPip() {
+  const pr = renderer.getPixelRatio();
+  const ph = Math.round(vh * 0.30 * pr), pw = Math.round(ph * 4 / 3), m = Math.round(10 * pr);
+  if (pw > vw * pr - 2 * m) return;
+  posePovCam(povCam, pw / ph);
+  const keepCar = car.visible, keepAxle = axleMarks.visible;
+  car.visible = S.ego; axleMarks.visible = false;
+  renderer.autoClear = false;
+  renderer.setScissorTest(true);
+  renderer.setViewport(vw * pr - pw - m, m, pw, ph);
+  renderer.setScissor(vw * pr - pw - m, m, pw, ph);
+  renderer.clearDepth();
+  renderer.render(scene, povCam);
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, vw * pr, vh * pr);
+  renderer.autoClear = true;
+  car.visible = keepCar; axleMarks.visible = keepAxle;
+}
+
+function frame(now) {
+  const wall = Math.min(0.25, (now - last) / 1000);   // 0.25 s cap only guards tab switches
+  const dt = Math.min(0.05, wall); last = now;
+  if (REC.active) { recTick(); }
+  else if (MD.on && S.playing) {
+    const sdt = wall * S.tscale;               // model driver: sim time = wall clock x scale
+    S.t += sdt;
+    if (S.cool > 0) S.cool -= sdt;
+    if (S.hold > 0) { S.hold -= sdt; }
+    else { mdTick(sdt);
+      if (S.cool <= 0 && S.cover >= (S.mode === 'race' ? 0.30 : 0.50)) violation('keluar jalur', 0.8);
+      if (!S.finished && S.t + S.pen >= S.stage) finish('stage limit reached, car stopped by rule III.D.1.5');
+    }
+  }
+  else { step(dt); placeCar(dt); }
+  car.visible = egoVisible();
+  placeCamera(dt); renderHUD();
+  renderer.render(scene, S.cam === 'pov' ? povCam : camera);
+  if (S.pip && S.cam !== 'pov') renderPip();
+}
+
+/* ---------- UI wiring --------------------------------------------------- */
+function bind(id, key, fmt, after) {
+  const s = el(id), o = el('v' + id.slice(1));
+  const up = () => { S[key] = parseFloat(s.value); o.textContent = fmt(S[key]); if (after) after(); };
+  s.addEventListener('input', up); up();
+}
+bind('sSpeed', 'vmax', v => v.toFixed(2) + ' m/s');
+bind('sAlat', 'alat', v => v.toFixed(1) + ' m/s²');
+bind('sNoise', 'noise', v => v.toFixed(3) + ' m');
+bind('sTime', 'tscale', v => v.toFixed(2) + '×');
+bind('sCp', 'ncp', v => v.toFixed(0), () => { resetRun(); });
+bind('sSig', 'sig', v => v.toFixed(2) + ' m', () => { buildRun(); });
+bind('sStage', 'stage', v => v.toFixed(0) + ' s');
+el('kAck').addEventListener('change', e => S.ack = e.target.checked);
+el('oLine').addEventListener('change', e => lineMesh.visible = e.target.checked);
+el('oDash').addEventListener('change', e => dashMesh.visible = e.target.checked);
+el('oTex').addEventListener('change', e => { if (texPlane) texPlane.visible = e.target.checked; });
+el('oOther').addEventListener('change', () => rebuildArenaObjects());
+el('oAxle').addEventListener('change', e => axleMarks.visible = e.target.checked);
+el('oEgo').addEventListener('change', e => { S.ego = e.target.checked; car.visible = egoVisible(); });
+el('kPivot').addEventListener('change', e => S.pivot = e.target.checked);
+
+/* nested binder for the two objects the sliders write into (mount + capture) */
+function bind2(id, obj, key, fmt, after) {
+  const s = el(id), o = el('v' + id.slice(1));
+  const up = () => { obj[key] = parseFloat(s.value); o.textContent = fmt(obj[key]); if (after) after(); };
+  s.addEventListener('input', up); up();
+}
+const signed = v => (v >= 0 ? '+' : '') + v.toFixed(3) + ' m';
+bind2('sMLong', S.mount, 'long', signed, updateMount);
+bind2('sMHei', S.mount, 'hei', v => v.toFixed(3) + ' m', updateMount);
+bind2('sMLat', S.mount, 'lat', signed, updateMount);
+bind2('sMPit', S.mount, 'pit', v => v.toFixed(0) + '°', updateMount);
+bind2('sMFov', S.mount, 'fov', v => v.toFixed(0) + '°');
+bind2('sRFps', S.cap, 'fps', v => v.toFixed(0) + ' fps');
+bind2('sRMax', S.cap, 'max', v => v.toFixed(0));
+bind2('sRQ', S.cap, 'q', v => v.toFixed(2));
+el('qRes').addEventListener('change', e => {
+  const p = e.target.value.split('x');
+  S.cap.w = +p[0]; S.cap.h = +p[1];
+});
+el('rSeg').addEventListener('change', e => S.cap.seg = e.target.checked);
+el('rAnn').addEventListener('change', e => S.cap.ann = e.target.checked);
+el('rRun').onclick = () => REC.active ? stopRecord('stopped by user') : startRecord();
+el('rZip').onclick = exportZip;
+
+function setAnchor(a) {
+  S.anchor = a;
+  [['aRear', 'rear'], ['aMid', 'mid'], ['aFront', 'front']]
+    .forEach(([id, k]) => el(id).classList.toggle('on', k === a));
+  updateMount();
+}
+el('aRear').onclick = () => setAnchor('rear');
+el('aMid').onclick = () => setAnchor('mid');
+el('aFront').onclick = () => setAnchor('front');
+
+function setMode(m) {
+  S.mode = m;
+  el('mRace').classList.toggle('on', m === 'race');
+  el('mChal').classList.toggle('on', m === 'chal');
+  resetRun();
+}
+el('mRace').onclick = () => setMode('race');
+el('mChal').onclick = () => setMode('chal');
+function setCam(c) {
+  S.cam = c;
+  ['cOrbit', 'cChase', 'cTop', 'cSide', 'cPov'].forEach(id =>
+    el(id).classList.toggle('on', id.slice(1).toLowerCase() === c));
+  car.visible = egoVisible();
+}
+el('cOrbit').onclick = () => setCam('orbit');
+el('cChase').onclick = () => setCam('chase');
+el('cTop').onclick = () => setCam('top');
+el('cSide').onclick = () => setCam('side');
+el('cPov').onclick = () => setCam('pov');
+el('cPip').onclick = () => {
+  S.pip = !S.pip;
+  el('cPip').classList.toggle('on', S.pip);
+};
+el('play').onclick = () => {
+  if (S.finished) resetRun();
+  S.playing = !S.playing;
+  el('play').textContent = S.playing ? 'Pause' : 'Run';
+  el('play').classList.toggle('on', S.playing);
+};
+function resetRun() {
+  if (REC.active) stopRecord('reset requested');
+  S.u = 0; S.t = 0; S.pen = 0; S.penList = []; S.cpsHit = 0; S.nextCp = 0; S.viol = 0;
+  S.hold = 0; S.cool = 0; S.finished = false; S.why = ''; S.off_now = 0; S.cover = 0;
+  trail.head = 0; trail.count = 0; trail.line.geometry.setDrawRange(0, 0);
+  MD.hist = []; MD.v = 0; MD.cmdV = 0; MD.steer = 0; MD.lat = 0; MD.head = 0; MD.curv = 0; MD.rows = 0; MD.valid = false;
+  S.playing = false; el('play').textContent = 'Run'; el('play').classList.remove('on');
+  buildRun();
+  if (MD.on) mdSyncFromPath();
+}
+el('reset').onclick = resetRun;
+addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); el('play').click(); }
+  if (e.key === 'r' || e.key === 'R') resetRun();
+  if (e.key === 'm' || e.key === 'M') setMode(S.mode === 'race' ? 'chal' : 'race');
+  if (e.key === 'v' || e.key === 'V') setCam(S.cam === 'pov' ? 'orbit' : 'pov');
+  if (e.key === 'p' || e.key === 'P') el('cPip').click();
+  if (e.key === 't' || e.key === 'T') { hudMin = !hudMin; renderHUD(); }   // minimize telemetry
+  if (e.key === 'i' || e.key === 'I') el('mdInfer').click();               // toggle corner inference view
+  if (e.key === 'c' || e.key === 'C') {
+    const o = ['orbit', 'chase', 'top', 'side', 'pov'];
+    setCam(o[(o.indexOf(S.cam) + 1) % o.length]);
+  }
+});
+
+let vw = 0, vh = 0;
+function resize() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (w === vw && h === vh) return;
+  vw = w; vh = h;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+buildRun(); resetRun(); resize();
+el('buildTag').textContent = (window.ARENA_BUILD || '?') +
+  (window.ARENA_MISSING_DEPS && window.ARENA_MISSING_DEPS.length ? ' (deps missing!)' : '');
+updateMount();
+axleMarks.visible = el('oAxle').checked;
+window.ARENA = {                        // headless check + console poking
+  S, step, placeCar, setMode, setCam, setAnchor, resetRun, score, car,
+  MD, mdSense, mdTick, mdSyncFromPath, polyfit, mdTruth, mdCapture,
+  REC, startRecord, stopRecord, exportZip, captureFrame, datasetEntries, datasetJson,
+  recTick, telemetryRow, annotationObj, intrinsicsOf, segPass, updateMount, setAnchor,
+  edgeClearance, carFramePoint, bodyCorners, headingErr, posePovCam,
+  povCam, capCam, povAnchor, axleMarks, mount: S.mount, cap: S.cap,
+  render: () => { resize(); placeCamera(0.016);
+    renderer.render(scene, S.cam === 'pov' ? povCam : camera); },
+  advance: (secs, dt) => { dt = dt || 0.02; S.playing = true;
+    for (let i = 0; i < secs / dt; i++) { step(dt); placeCar(dt); } },
+  renderer, scene, camera
+};
+renderer.setAnimationLoop(() => { resize(); frame(performance.now()); });
+})();
+</script>
+</body>
+</html>
