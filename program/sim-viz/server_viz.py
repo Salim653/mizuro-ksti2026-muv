@@ -16,7 +16,8 @@ GET  /health
 Backend: ONNX Runtime (model_fp32_480.onnx, ~57 ms/frame on the 4750U).
 Falls back to the .pt automatically if ONNX is missing.
 
-Run:  python server_viz.py     (miniconda python recommended: has onnxruntime)
+Run:  KSTI_BACKEND=cuda python server_viz.py   (Jetson CUDA)
+      python server_viz.py                     (DirectML by default)
 Stop: Ctrl+C
 """
 import base64, json, os, sys, threading
@@ -57,7 +58,7 @@ print("loading", WEIGHTS, f"(imgsz {IMSZ}) ...")
 USE_ONNX = WEIGHTS.endswith(".onnx")
 if USE_ONNX:
     # Prefer the DirectML distribution when another site-packages has CPU ORT.
-    BACKEND = os.environ.get("KSTI_BACKEND", "dml").lower()
+    BACKEND = os.environ.get("KSTI_BACKEND", "cuda").lower()
     if BACKEND == "dml":
         try:
             _dml_site = str(distribution("onnxruntime-directml").locate_file(""))
@@ -70,15 +71,21 @@ if USE_ONNX:
     _so.inter_op_num_threads = 1
     _so.add_session_config_entry("session.intra_op.allow_spinning", "0")
     _so.add_session_config_entry("session.inter_op.allow_spinning", "0")
-    # Set KSTI_BACKEND=cpu to opt out of DirectML.
+    # Choose DirectML, CUDA, or CPU explicitly; fail rather than silently using CPU.
     if BACKEND == "dml":
         if "DmlExecutionProvider" not in ort.get_available_providers():
             raise RuntimeError("DirectML is unavailable; install onnxruntime-directml or set KSTI_BACKEND=cpu")
         _so.enable_mem_pattern = False
         _so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         _prov = ["DmlExecutionProvider", "CPUExecutionProvider"]
-    else:
+    elif BACKEND == "cuda":
+        if "CUDAExecutionProvider" not in ort.get_available_providers():
+            raise RuntimeError("CUDA is unavailable; install a CUDA-enabled onnxruntime-gpu or set KSTI_BACKEND=cpu")
+        _prov = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    elif BACKEND == "cpu":
         _prov = ["CPUExecutionProvider"]
+    else:
+        raise ValueError(f"Unsupported KSTI_BACKEND={BACKEND!r}; expected dml, cuda, or cpu")
     SESS = ort.InferenceSession(WEIGHTS, _so, providers=_prov)
     print("onnxruntime providers:", SESS.get_providers())
     INAME = SESS.get_inputs()[0].name
