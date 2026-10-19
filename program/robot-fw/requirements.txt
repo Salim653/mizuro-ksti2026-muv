@@ -1,0 +1,3 @@
+# Install the Jetson-compatible OpenCV build separately if using CSI/GStreamer.
+pyserial
+opencv-python

@@ -1,0 +1,31 @@
+# Jetson Orin Nano runtime deps — JetPack 6.x (L4T r36.x), CUDA 12.6, Python 3.10, aarch64.
+#
+# NVIDIA/community wheels that are not on PyPI (onnxruntime-gpu, torch, pycuda, ...)
+# live on the Jetson AI Lab index. Match jpX/cuYYY to the JetPack's CUDA:
+# JetPack 6.x = CUDA 12.6 -> jp6/cu126.
+# NOTE: the host pypi.jetson-ai-lab.dev was retired; the live host is .io.
+# The index has been flaky (wheels disappearing then returning), so verify a wheel
+# exists before depending on it:
+#   curl -sI https://pypi.jetson-ai-lab.io/jp6/cu126/onnxruntime-gpu/ | head -1
+--extra-index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+
+# Serial link to the body MCU. Pure-python, installs from PyPI as well.
+pyserial
+
+# ONNX Runtime GPU — only the sim-viz server uses it (server_viz.py), not robot-fw.
+# PyPI's onnxruntime-gpu has no usable aarch64+CUDA build; this pulls the JetPack 6
+# wheel from the index above (cp310 linux_aarch64, e.g. onnxruntime_gpu-1.24.0).
+onnxruntime-gpu
+
+# OpenCV (cv2) is intentionally NOT a pip dependency.
+#   - JetPack preinstalls OpenCV WITH GStreamer (apt: python3-opencv).
+#     camera.py needs cv2.CAP_GSTREAMER, which only that build provides.
+#   - `pip install opencv-python` shadows it with a wheel that lacks GStreamer
+#     (and CUDA), which breaks camera.py. Do not add it here.
+#   - The JetPack build has GStreamer but NO CUDA. If cv2.dnn inference in
+#     vision.py is too slow, rebuild with CUDA using NVIDIA's Jetson script:
+#     https://github.com/AastaNV/JEP/blob/master/script/install_opencv4.10.0_Jetpack6.1.sh
+#   - Verify after any change:
+#     python3 -c "import cv2; print(cv2.getBuildInformation())"   # want: GStreamer: YES
+
+# numpy ships with JetPack (apt: python3-numpy). Do not pin it here.
