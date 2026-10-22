@@ -11,6 +11,7 @@ from camera import Camera
 from controller import Controller
 from core import Command, Config, Observation, State, StateMachine
 from mcu import McuLink, format_command
+from stream import FrameHub, MjpegServer
 from telemetry import RunLog
 from vision import LaneEstimator, OnnxDetector
 
@@ -29,7 +30,10 @@ def self_check() -> None:
     sm.transition(State.READY, "checks passed")
     sm.transition(State.RUNNING, "start requested")
     try:
-        Config.load(Path(__file__).with_name("robot.example.json"))
+        config_file = Path(__file__).with_name("robot.json")
+        if not config_file.is_file():
+            config_file = Path(__file__).with_name("robot.example.json")
+        Config.load(config_file)
     except Exception as exc:
         raise AssertionError(f"example config invalid: {exc}") from exc
     try:
@@ -50,14 +54,61 @@ def self_check() -> None:
         raise AssertionError("out-of-range serial command accepted")
     assert Config().loop_hz == 60.0
     assert Config().dry_run
+    assert not Config().stream_enabled and Config().stream_port == 8080
+    hub = FrameHub()
+    try:
+        hub.publish(None)
+    except Exception:
+        raise AssertionError("publish without subscribers must no-op")
+    assert hub.snapshot(timeout=0.05) is None and hub.encoded_frames == 0
     print("self-check passed")
+
+
+def serve_stream_only(config: Config) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    log = RunLog(config.output_dir)
+    camera = None
+    server = None
+    stopping = False
+
+    def request_stop(_signum, _frame) -> None:
+        nonlocal stopping
+        stopping = True
+
+    signal.signal(signal.SIGINT, request_stop)
+    signal.signal(signal.SIGTERM, request_stop)
+    try:
+        camera = Camera(config.camera_pipeline, config.image_width, config.image_height)
+        hub = FrameHub(config.stream_quality, config.stream_fps, config.stream_width, config.stream_height)
+        server = MjpegServer(hub, config.stream_host, config.stream_port).start()
+        log.event("stream", mode="stream-only", url=server.url, pipeline=camera.pipeline)
+        print(f"streaming {server.url} (Ctrl-C to stop)")
+        period_s = 1.0 / config.stream_fps
+        while not stopping:
+            loop_start = time.monotonic()
+            hub.publish(camera.read())
+            delay = period_s - (time.monotonic() - loop_start)
+            if delay > 0:
+                time.sleep(delay)
+    except Exception as exc:
+        logging.exception("stream fault")
+        log.event("fault", error=str(exc))
+        raise
+    finally:
+        if server:
+            server.stop()
+        if camera:
+            camera.close()
+        log.event("shutdown", mode="stream-only")
+        log.close()
 
 
 def run(config: Config) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     log = RunLog(config.output_dir)
     machine = StateMachine()
-    camera = detector = mcu = None
+    camera = detector = mcu = server = None
+    hub = None
     stopping = False
     lane_lost = 0
     cmd = Command()
@@ -74,11 +125,18 @@ def run(config: Config) -> None:
         if not config.dry_run:
             camera = Camera(config.camera_pipeline, config.image_width, config.image_height)
             detector = OnnxDetector(config.model_path, config.confidence_threshold)
+            if config.stream_enabled:
+                hub = FrameHub(config.stream_quality, config.stream_fps,
+                               config.stream_width, config.stream_height)
+                server = MjpegServer(hub, config.stream_host, config.stream_port).start()
+                log.event("stream", url=server.url)
         machine.transition(State.READY, "startup checks passed")
         log.event("ready", config=asdict(config))
         log.row(machine, obs, cmd)
         if config.dry_run:
             log.event("dry_run", message="hardware disabled; no movement commands sent")
+            if config.stream_enabled:
+                log.event("stream_skipped", reason="dry_run opens no camera; use --stream-only")
             print(f"Dry run initialized. Logs: {log.path}")
             return
         if not StartGate().wait(lambda: stopping):
@@ -92,6 +150,8 @@ def run(config: Config) -> None:
         while not stopping:
             loop_start = time.monotonic()
             frame = camera.read()
+            if hub:
+                hub.publish(frame)
             infer_start = time.monotonic()
             detections = detector.infer(frame)
             infer_ms = (time.monotonic() - infer_start) * 1000
@@ -138,6 +198,8 @@ def run(config: Config) -> None:
                     if mcu:
                         mcu.close()
                 finally:
+                    if server:
+                        server.stop()
                     log.row(machine, obs, cmd)
                     log.event("shutdown", state=machine.state.name, reason=machine.reason)
                     log.close()
@@ -147,13 +209,19 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=Path("robot.json"))
     parser.add_argument("--self-check", action="store_true")
+    parser.add_argument("--stream-only", action="store_true",
+                        help="serve the camera as MJPEG without arming the robot")
     args = parser.parse_args()
     if args.self_check:
         self_check()
         return
     if not args.config.is_file():
         raise SystemExit(f"missing config: {args.config}; copy robot.example.json and edit it")
-    run(Config.load(args.config))
+    config = Config.load(args.config)
+    if args.stream_only:
+        serve_stream_only(config)
+        return
+    run(config)
 
 
 if __name__ == "__main__":

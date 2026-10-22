@@ -35,6 +35,13 @@ class Config:
     dry_run: bool = True
     save_frames: bool = False
     motor_driver: str = "external_esc"
+    stream_enabled: bool = False
+    stream_host: str = "0.0.0.0"
+    stream_port: int = 8080
+    stream_fps: float = 15.0
+    stream_quality: int = 75
+    stream_width: int = 640
+    stream_height: int = 480
 
     @classmethod
     def load(cls, path: Path) -> "Config":
@@ -53,6 +60,12 @@ class Config:
             raise ValueError("lane_lost_frames and loop_hz must be positive")
         if cfg.motor_driver not in {"external_esc", "mcu_hbridge"}:
             raise ValueError("motor_driver must be external_esc or mcu_hbridge")
+        if not 1 <= cfg.stream_port <= 65535:
+            raise ValueError("stream_port must be in [1, 65535]")
+        if cfg.stream_fps <= 0 or not 1 <= cfg.stream_quality <= 100:
+            raise ValueError("stream_fps must be positive and stream_quality in [1, 100]")
+        if cfg.stream_width < 0 or cfg.stream_height < 0:
+            raise ValueError("stream dimensions must be >= 0 (0 = camera resolution)")
         if not cfg.dry_run and not all((cfg.camera_pipeline, cfg.model_path, cfg.serial_device)):
             raise ValueError("live mode requires camera_pipeline, model_path, serial_device")
         if cfg.save_frames and cfg.dry_run:

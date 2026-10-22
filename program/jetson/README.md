@@ -4,6 +4,8 @@ Jetson Orin Nano memegang akuisisi gambar, inferensi ONNX, geometri lajur, peren
 
 ## Menjalankan pertama kali dengan aman
 
+Pakai `/usr/bin/python3` (OpenCV JetPack, punya backend GStreamer). Jangan pakai `.venv` repositori: `opencv-python` dari pip tidak membawa GStreamer, jadi kamera CSI gagal dibuka. Jalankan `deactivate` dulu bila venv aktif — `Camera` akan menyebutkan masalah ini secara eksplisit bila salah interpreter.
+
 ```sh
 python3 main.py --self-check
 python3 main.py --config robot.example.json
@@ -11,11 +13,38 @@ python3 main.py --config robot.example.json
 
 Konfigurasi contoh berjalan kering (dry). Ia membuat direktori run bertimestamp berisi `telemetry.csv` dan `events.jsonl`, dan tidak mengirim perintah aktuator. Salin ke `robot.json` sebelum mengisi nilai. Jangan matikan `dry_run` sampai kamera, model terlatih, input start, protokol MCU, perilaku e-stop, dan watchdog sudah diuji di meja dengan roda terangkat.
 
+## Stream kamera (bench/pit)
+
+Streamer ada di dalam framework ini, bukan proses terpisah. Satu capture, satu pemilik kamera CSI.
+
+```sh
+python3 main.py --stream-only --config robot.json   # kamera saja, robot tidak di-arm
+```
+
+Endpoint di `stream_host:stream_port` (default `0.0.0.0:8080`): `/` halaman viewer, `/stream` MJPEG, `/snapshot` satu JPEG.
+
+- `--stream-only` membuka kamera dan menyajikan MJPEG tanpa MCU dan tanpa gate start. Jalankan manual di terminal sendiri, atau di latar belakang dengan `nohup`/`tmux`. Tidak ada unit systemd yang terpasang untuk framework ini; satu proses saja yang boleh memegang kamera CSI.
+- Run live (`stream_enabled: true`) mem-publish frame yang sama dengan loop kontrol; tidak ada capture kedua.
+- Encode JPEG hanya terjadi bila ada client terhubung dan dibatasi `stream_fps`; tanpa penonton biayanya nol. Ini encoder software OpenCV, karena image JetPack ini tidak menyediakan `nvjpegenc` di dalam proses Python. Ukur ulang bila menaikkan `stream_width`/`stream_height`/`stream_quality`.
+- `stream_width`/`stream_height` = `0` berarti resolusi kamera penuh.
+- Saat lomba, jangan jalankan streamer: feed kamera tidak boleh berjalan.
+
+Contoh latar belakang tanpa supervisor:
+
+```sh
+cd ~/mizuro-ksti2026-muv/program/jetson
+nohup python3 main.py --stream-only --config robot.json > /tmp/mizuro-stream.log 2>&1 &
+tail -f /tmp/mizuro-stream.log
+```
+
+Hentikan dengan `Ctrl-C` (foreground) atau `pkill -f "main.py --stream-only"`.
+
 ## Isi folder
 
 - `main.py`: peluncuran, orkestrasi state, dan loop.
 - `core.py`: konfigurasi, data command/observation, dan state machine.
-- `camera.py`: capture CSI/GStreamer.
+- `camera.py`: capture CSI/GStreamer. `camera_pipeline` kosong berarti pipeline bawaan `nvarguscamerasrc → nvvidconv → videoconvert → appsink` (BGR) pada `image_width` x `image_height`.
+- `stream.py`: MJPEG over HTTP dari frame yang sama dengan loop kontrol (`FrameHub` + `MjpegServer`). Lihat bagian Stream kamera.
 - `vision.py`: inferensi ONNX dan seam estimasi lajur.
 - `controller.py`: seam lajur ke perintah kemudi.
 - `mcu.py`: driver perintah serial. Protokol ASCII `speed_mps,steering_rad\n`, keduanya desimal dengan empat angka di belakang koma; rentang ±0.8 m/s dan ±0.55 rad pada 115200 baud.

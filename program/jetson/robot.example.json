@@ -14,5 +14,12 @@
   "loop_hz": 60,
   "dry_run": true,
   "save_frames": false,
-  "motor_driver": "external_esc"
+  "motor_driver": "external_esc",
+  "stream_enabled": false,
+  "stream_host": "0.0.0.0",
+  "stream_port": 8080,
+  "stream_fps": 15,
+  "stream_quality": 75,
+  "stream_width": 640,
+  "stream_height": 480
 }
