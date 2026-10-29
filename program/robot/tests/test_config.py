@@ -1,6 +1,7 @@
 """Tes config: default, penolakan key asing, validasi rentang, mode live."""
 import json
-from dataclasses import asdict
+from dataclasses import asdict, fields
+from pathlib import Path
 
 import pytest
 
@@ -90,6 +91,26 @@ def test_wrong_type_rejected(tmp_path):
 def test_invalid_values_rejected(patch):
     with pytest.raises(ValueError):
         Config(**{**asdict(Config()), **patch}).validate()
+
+
+@pytest.mark.parametrize("patch", [
+    {"dry_run": "ya"},               # string truthy = live diam-diam
+    {"loop_hz": "60"},               # string lolos konstruktor, meledak di validasi
+    {"stream_port": True},           # bool adalah int di Python — harus ditolak
+    {"image_width": 1280.0},         # float untuk field integer
+    {"stream_host": 8080},           # angka untuk field string
+])
+def test_wrong_scalar_types_rejected(patch):
+    with pytest.raises(ValueError, match="[Tt]ipe"):
+        Config(**{**asdict(Config()), **patch}).validate()
+
+
+def test_example_config_matches_dataclass_fields():
+    """Contoh config harus memuat SETIAP field Config — kalau ada field baru
+    dan contoh tidak diupdate, tes ini gagal (bukan drift diam-diam)."""
+    example_path = Path(__file__).resolve().parent.parent / "robot.example.json"
+    data = json.loads(example_path.read_text(encoding="utf-8"))
+    assert set(data) == {f.name for f in fields(Config)}
 
 
 def test_live_mode_requires_serial_and_model():

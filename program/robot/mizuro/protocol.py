@@ -22,6 +22,15 @@ WATCHDOG_MS = 100
 DECIMALS = 4
 
 
+def _fixed(value: float) -> str:
+    """Format dengan DECIMALS desimal; "-0.0000" dinormalkan jadi "0.0000"
+    supaya wire dan log tidak pernah memuat negatif-nol."""
+    text = f"{value:.{DECIMALS}f}"
+    if text.startswith("-") and float(text) == 0.0:
+        text = text[1:]
+    return text
+
+
 def format_command(command: Command) -> bytes:
     """Encode Command menjadi baris protokol.
 
@@ -34,5 +43,5 @@ def format_command(command: Command) -> bytes:
     if not -MAX_STEER_RAD <= command.steering_rad <= MAX_STEER_RAD:
         raise ValueError(
             f"steering_rad {command.steering_rad} di luar batas ±{MAX_STEER_RAD}")
-    line = f"{command.speed_mps:.{DECIMALS}f},{command.steering_rad:.{DECIMALS}f}\n"
+    line = f"{_fixed(command.speed_mps)},{_fixed(command.steering_rad)}\n"
     return line.encode("ascii")

@@ -17,6 +17,13 @@ def test_format_negative_and_four_decimals():
     assert format_command(Command(-0.123456, 0.05)) == b"-0.1235,0.0500\n"
 
 
+def test_negative_zero_normalized_on_wire():
+    # -0.00004 dibulatkan jadi "-0.0000" oleh format biasa; protokol
+    # menormalkannya supaya wire dan log tidak pernah memuat negatif-nol.
+    assert format_command(Command(-0.00004, 0.0)) == b"0.0000,0.0000\n"
+    assert format_command(Command(0.0, -0.00004)) == b"0.0000,0.0000\n"
+
+
 @pytest.mark.parametrize("cmd", [
     Command(0.81, 0.0),
     Command(-0.81, 0.0),

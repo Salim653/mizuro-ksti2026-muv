@@ -101,6 +101,7 @@ class Config:
         return cfg
 
     def validate(self) -> None:
+        self._check_types()
         if not 0.0 <= self.confidence_threshold <= 1.0:
             raise ValueError("confidence_threshold harus dalam [0, 1]")
         if not 0.0 <= self.lane_min_confidence <= 1.0:
@@ -150,3 +151,34 @@ class Config:
                 raise ValueError("mode live mensyaratkan serial_device")
             if not self.model_path:
                 raise ValueError("mode live mensyaratkan model_path")
+
+    def _check_types(self) -> None:
+        """Dataclass tidak memeriksa tipe; salah tipe bisa mengubah arti
+        (mis. dry_run string dianggap truthy = live). Periksa eksplisit."""
+        bools = ("dry_run", "save_frames")
+        strs = ("output_dir", "serial_device", "camera_pipeline",
+                "lane_polarity", "homography_path", "model_path",
+                "motor_driver", "stream_host")
+        ints = ("serial_baud", "image_width", "image_height", "camera_fps",
+                "lane_lost_frames", "stream_port", "stream_quality",
+                "stream_width", "stream_height")
+        floats = ("confidence_threshold", "lane_min_confidence", "lane_roi_top",
+                  "max_speed_mps", "steering_limit_rad", "lookahead_m",
+                  "heading_gain", "lateral_gain", "max_lateral_accel",
+                  "loop_hz", "max_inference_ms", "run_timeout_s", "stream_fps")
+        for name in bools:
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"tipe salah: {name} harus bool")
+        for name in strs:
+            if not isinstance(getattr(self, name), str):
+                raise ValueError(f"tipe salah: {name} harus string")
+        for name in ints:
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"tipe salah: {name} harus integer")
+        for name in floats:
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"tipe salah: {name} harus angka")
+        if not self.output_dir.strip():
+            raise ValueError("output_dir tidak boleh kosong")

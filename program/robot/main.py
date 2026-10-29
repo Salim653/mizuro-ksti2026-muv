@@ -20,11 +20,25 @@ from mizuro.telemetry import RunLog
 from mizuro.types import Command
 
 
+def require(condition: object, message: str) -> None:
+    """Assert yang TIDAK mati di bawah `python3 -O`.
+
+    `assert` biasa dihapus interpreter saat optimisasi; self-check harus
+    tetap gagal keras kalau fondasi rusak, jadi raise eksplisit.
+    """
+    if not condition:
+        raise AssertionError(message)
+
+
 def self_check() -> None:
-    """Verifikasi fondasi tanpa hardware. Gagal = assertion, bukan warning."""
+    """Verifikasi fondasi tanpa hardware. Gagal = AssertionError, bukan warning."""
     # --- protokol: format persis + batas ditegakkan ---
-    assert format_command(Command(0.8, -0.55)) == b"0.8000,-0.5500\n"
-    assert format_command(Command()) == b"0.0000,0.0000\n"
+    require(format_command(Command(0.8, -0.55)) == b"0.8000,-0.5500\n",
+            "format perintah pada batas salah")
+    require(format_command(Command()) == b"0.0000,0.0000\n",
+            "format perintah nol salah")
+    require(format_command(Command(-0.00004, 0.0)) == b"0.0000,0.0000\n",
+            "negatif-nol tidak dinormalkan pada wire")
     for bad in (Command(0.81, 0.0), Command(-0.81, 0.0), Command(0.0, 0.56),
                 Command(0.0, -0.56), Command(float("nan"), 0.0),
                 Command(float("inf"), 0.0)):
@@ -37,14 +51,17 @@ def self_check() -> None:
 
     # --- config: default valid, nilai invalid ditolak, contoh config valid ---
     cfg = Config()
-    assert cfg.dry_run is True
-    assert cfg.loop_hz == 60.0 and cfg.run_timeout_s == 300.0
-    assert cfg.max_speed_mps == MAX_SPEED_MPS
-    assert cfg.steering_limit_rad == MAX_STEER_RAD
+    require(cfg.dry_run is True, "default dry_run harus True")
+    require(cfg.loop_hz == 60.0 and cfg.run_timeout_s == 300.0,
+            "default loop_hz/run_timeout_s salah")
+    require(cfg.max_speed_mps == MAX_SPEED_MPS, "default max_speed_mps salah")
+    require(cfg.steering_limit_rad == MAX_STEER_RAD,
+            "default steering_limit_rad salah")
     for patch in ({"loop_hz": 0}, {"max_speed_mps": 0.9},
                   {"steering_limit_rad": 0.6}, {"stream_port": 70000},
                   {"lane_polarity": "ungu"}, {"motor_driver": "sihir"},
-                  {"save_frames": True}, {"dry_run": False}):
+                  {"save_frames": True}, {"dry_run": False},
+                  {"dry_run": "ya"}, {"loop_hz": "60"}, {"stream_port": True}):
         try:
             Config(**{**asdict(cfg), **patch}).validate()
         except ValueError:
@@ -58,10 +75,11 @@ def self_check() -> None:
     sm.transition(State.READY, "checks")
     sm.transition(State.RUNNING, "start")
     first_started = sm.started_at
-    assert first_started is not None
+    require(first_started is not None, "started_at harus terisi saat RUNNING")
     sm.transition(State.DEGRADED, "lane lost")
     sm.transition(State.RUNNING, "recovered")
-    assert sm.started_at == first_started  # timer run tidak reset oleh DEGRADED
+    require(sm.started_at == first_started,
+            "timer run tidak boleh reset oleh DEGRADED")
     sm.transition(State.STOPPED, "done")
     try:
         sm.transition(State.RUNNING, "invalid")
@@ -75,13 +93,16 @@ def self_check() -> None:
         with RunLog(tmp) as log:
             log.event("selftest")
             log.row(sm, None, Command())
-            assert (log.path / "telemetry.csv").stat().st_size > 0
-            assert (log.path / "events.jsonl").stat().st_size > 0
+            require((log.path / "telemetry.csv").stat().st_size > 0,
+                    "telemetry.csv kosong")
+            require((log.path / "events.jsonl").stat().st_size > 0,
+                    "events.jsonl kosong")
 
     # --- mcu: dry-run tidak menyentuh serial ---
     mcu = McuLink("/dev/ttyTIDAKADA", dry_run=True)
     mcu.send(Command(0.5, 0.1))
-    assert mcu.alive and mcu.serial is None
+    require(mcu.alive and mcu.serial is None,
+            "dry-run menyentuh serial")
     mcu.close()
 
     print("self-check passed")
