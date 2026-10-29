@@ -5,6 +5,37 @@ Riwayat paket runtime robot (`program/robot/`). Scaffold lama
 build baru dimulai. Format: satu entri per commit besar, plus catatan
 verifikasi dan yang BELUM diuji.
 
+## 2026-10-30 — Fase 3: controller Stanley + speed profile + replay sim
+
+Branch `feature/camera-mount-offset`.
+
+- `mizuro/controller.py` (baru): `StanleyController` — lane state ->
+  Command (speed + steering). Stanley: `steer = heading_gain * heading
+  + atan(lateral_gain * lane_error / (v + softening))`. Speed dari
+  kurvatur: `v = sqrt(a_lat * R)`, di-clamp [min_speed, max_speed],
+  di-smooth dengan clamp akselerasi/rem. Confidence 0 / lane_error
+  None -> Command nol (kontrak keselamatan).
+- Konvensi tanda terverifikasi dari geometry.py + firmware: lane_error
+  > 0 = lajur di kanan robot -> steer positif; heading_error > 0 =
+  lajur mengarah kanan -> steer positif; curvature > 0 = belok kanan.
+- Config: 5 field baru (`min_speed_mps`, `max_accel_mps2`,
+  `max_decel_mps2`, `stanley_softening_mps`, `min_curve_radius_m`) +
+  validasi + example json.
+- `tools/replay_control.py` (baru): simulasi closed-loop Stanley
+  against track_data.json (arc-length model, bicycle dynamics).
+  Skenario: start centred + start dengan offset/heading error.
+  Lapor transient + steady-state error + max lateral accel.
+- Hasil replay: dari offset 0.2m + heading 20deg -> converge ke
+  3.1mm / 1.47deg steady-state, lap 19.4m selesai 24.8s, max a_lat
+  0.43 m/s^2 (batas 3.0). Speed profile inert di track spec (R >= 1.5m
+  di 0.8 m/s hanya butuh 0.43 m/s^2) — berfungsi sebagai safety net
+  untuk kurva tak terduga, bukan speed controller utama.
+- Bug ketangkap saat development: sign convention simulasi terbalik
+  (d > 0 = robot di kanan centreline = lajur di KIRI robot, bukan
+  kanan) — robot spin 180 derajat sebelum diperbaiki.
+- Belum diuji: controller terhadap persepsi NYATA (butuh mock lane /
+  arena fisik); tuning gain final (butuh data mount final).
+
 ## 2026-10-30 — Fase 2: detektor semantik ONNX (cv2.dnn)
 
 Branch `feature/camera-mount-offset`.

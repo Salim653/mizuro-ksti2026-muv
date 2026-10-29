@@ -100,8 +100,9 @@ serta test suite repo ini.
    cv2.dnn + decode YOLO11-seg + NMS per-kelas + mask mapping; export
    tool + bench integration. Tinggal: dataset arena-3d -> train kelas
    checkpoint -> logika checkpoint.
-4. **Fase 3 — kontrol & closed-loop sim**: Stanley + speed profile,
-   replay dataset, tuning hanya di sim.
+4. **Fase 3 — kontrol** ( Stanley + speed profile selesai): replay sim
+   against track geometry lolos (converge <5mm steady-state). Tinggal:
+   tuning terhadap persepsi nyata (butuh mock lane/arena).
 5. **Fase 4 — MCU & safety**: spesifikasi firmware STM32, protokol status
    balik, timer 300 s, persistensi checkpoint.
 

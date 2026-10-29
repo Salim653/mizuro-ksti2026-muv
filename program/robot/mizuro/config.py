@@ -63,6 +63,11 @@ class Config:
     heading_gain: float = 0.8
     lateral_gain: float = 1.2
     max_lateral_accel: float = 3.0
+    min_speed_mps: float = 0.15
+    max_accel_mps2: float = 0.5
+    max_decel_mps2: float = 1.0
+    stanley_softening_mps: float = 0.1
+    min_curve_radius_m: float = 1.5
 
     # --- loop & keselamatan ---
     loop_hz: float = 60.0
@@ -148,6 +153,15 @@ class Config:
             raise ValueError("gain kontrol tidak boleh negatif")
         if self.max_lateral_accel <= 0:
             raise ValueError("max_lateral_accel harus positif")
+        if not 0.0 <= self.min_speed_mps <= self.max_speed_mps:
+            raise ValueError(
+                "min_speed_mps harus dalam [0, max_speed_mps]")
+        if self.max_accel_mps2 <= 0 or self.max_decel_mps2 <= 0:
+            raise ValueError("max_accel/decel_mps2 harus positif")
+        if self.stanley_softening_mps < 0:
+            raise ValueError("stanley_softening_mps tidak boleh negatif")
+        if self.min_curve_radius_m <= 0:
+            raise ValueError("min_curve_radius_m harus positif")
         if self.loop_hz <= 0:
             raise ValueError("loop_hz harus positif")
         if self.max_inference_ms <= 0:
@@ -186,6 +200,8 @@ class Config:
         floats = ("confidence_threshold", "lane_min_confidence", "lane_roi_top",
                   "max_speed_mps", "steering_limit_rad", "lookahead_m",
                   "heading_gain", "lateral_gain", "max_lateral_accel",
+                  "min_speed_mps", "max_accel_mps2", "max_decel_mps2",
+                  "stanley_softening_mps", "min_curve_radius_m",
                   "loop_hz", "max_inference_ms", "run_timeout_s", "stream_fps",
                   "mount_x_m", "mount_y_m", "mount_z_m", "mount_pitch_deg",
                   "mount_yaw_deg", "mount_roll_deg")
