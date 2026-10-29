@@ -5,6 +5,34 @@ Riwayat paket runtime robot (`program/robot/`). Scaffold lama
 build baru dimulai. Format: satu entri per commit besar, plus catatan
 verifikasi dan yang BELUM diuji.
 
+## 2026-10-29 — Bench: mode `--stream-only` (kamera + MJPEG + tracker)
+
+Branch `feature/camera-mount-offset`.
+
+- `main.py`: flag `--stream-only` — buka kamera CSI, publish MJPEG
+  (`http://127.0.0.1:8080/`), dan jalankan `LaneTracker` per frame.
+  TANPA motor, TANPA serial: mode bench murni. Tanpa `robot.json`
+  memakai Config default (mount arena-3d).
+- Frame sampel ditulis ke `runs/bench-frames/frame-NNNNNN.jpg` setiap
+  30 frame buat diagnosa offline (lantai nyata tidak bisa direproduksi
+  synth).
+- Log per-frame: lateral/heading/confidence + stasiun terdeteksi;
+  frame tanpa lajur log alasan + polarity terpilih.
+- **Bench kamera nyata LOLOS** (Jetson Orin Nano, Pi Cam v2 imx219,
+  1280x720@60 mode 4): kamera terbuka, frame mengalir, exposure wajar,
+  tracker menolak scene non-lajur dengan benar (confidence rendah,
+  16/16 stasiun, polarity light_on_dark). Validasi tracker di lantai
+  NYATA dengan marka lajur masih pending — arena/lajur belum tersedia.
+- Saga diagnosa kamera (buat catatan tim): dmabuf error nvargus ->
+  sunshine pegang /dev/video0 (dimatikan) -> restart nvargus-daemon ->
+  reload nvmap/reboot -> kamera tidak terdeteksi (error -121 EREMOTEIO,
+  ribbon CSI tidak seat) -> reseat -> kamera hidup. Pelajaran: JANGAN
+  open/close kamera berulang-ulang cepat; state daemon degradasi dan
+  butuh ~30 s idle untuk recover.
+- Verifikasi: 160 tes lolos, self-check lolos (dengan & tanpa `-O`),
+  py_compile OK. Belum diuji: tracker di lantai nyata dengan marka
+  lajur (butuh arena/mock lane), `--dataset` against zip arena-3d asli.
+
 ## 2026-10-29 — Kamera: konfigurasi mount x/y/z + yaw/roll
 
 Branch `feature/camera-mount-offset`.

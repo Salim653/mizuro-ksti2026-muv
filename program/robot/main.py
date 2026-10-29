@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Runtime robot MIZURO — Fase 0: fondasi.
+"""Runtime robot MIZURO.
 
 Yang sudah ada: config tervalidasi, state machine, protokol serial, log run,
-dan self-check. Loop persepsi (kamera -> lajur -> kontrol -> MCU) datang di
-Fase 1-3; sampai itu ada, mode live sengaja DITOLAK alih-alih setengah jalan.
+self-check, dan mode bench `--stream-only` (kamera + MJPEG + tracker lajur,
+TANPA motor). Loop kontrol (lajur -> kontrol -> MCU) datang di Fase 3;
+sampai itu ada, mode live sengaja DITOLAK alih-alih setengah jalan.
 """
 from __future__ import annotations
 
@@ -132,23 +133,101 @@ def boot_dry(config: Config) -> None:
             log.event("shutdown", state=machine.state.name, reason=machine.reason)
 
 
+def stream_only(config: Config) -> None:
+    """Bench: kamera CSI + MJPEG + tracker lajur. TANPA motor, TANPA serial.
+
+    Mode ini tidak menyentuh serial dan tidak menggerakkan apa pun:
+    kamera dibuka, tiap frame dipublish ke stream (buat mata) dan
+    dilewatkan ke LaneTracker (buat angka). Ini validasi Fase 1 dengan
+    kamera asli — kalau tracker gagal di lantai nyata, ketahuan di sini,
+    bukan di lintasan.
+
+    Frame sampel ditulis ke runs/bench-frames/ buat diagnosa offline
+    (lantai nyata tidak bisa direproduksi synth).
+
+    WAJIB /usr/bin/python3 di Jetson (cv2 butuh backend GStreamer).
+    Ctrl+C untuk berhenti.
+    """
+    import math
+    from pathlib import Path
+
+    import cv2
+
+    from mizuro.camera import Camera
+    from mizuro.perception.calibration import CameraCalibration
+    from mizuro.perception.classical import LaneTracker
+    from mizuro.stream import FrameHub, MjpegServer
+
+    calib = CameraCalibration.from_config(config)
+    tracker = LaneTracker(polarity=config.lane_polarity,
+                          roi_top=config.lane_roi_top,
+                          min_confidence=config.lane_min_confidence)
+    hub = FrameHub(quality=config.stream_quality, fps=config.stream_fps,
+                   width=config.stream_width, height=config.stream_height)
+    dump_dir = Path(config.output_dir) / "bench-frames"
+    dump_dir.mkdir(parents=True, exist_ok=True)
+
+    with Camera.from_config(config) as cam, \
+            MjpegServer.from_config(config, hub) as server:
+        print(f"stream : {server.url}")
+        print(f"kamera : {config.image_width}x{config.image_height} "
+              f"@{config.camera_fps}fps  mount z={config.mount_z_m} m "
+              f"pitch={config.mount_pitch_deg} deg x={config.mount_x_m} "
+              f"y={config.mount_y_m} yaw={config.mount_yaw_deg} "
+              f"roll={config.mount_roll_deg}")
+        print(f"dump   : {dump_dir} (setiap frame ke-30)")
+        print("Ctrl+C untuk berhenti")
+        n = 0
+        try:
+            while True:
+                frame = cam.read()
+                hub.publish(frame)
+                obs = tracker.estimate(frame, calib, float(n))
+                n += 1
+                if n % 30 == 0:
+                    cv2.imwrite(str(dump_dir / f"frame-{n:06d}.jpg"), frame)
+                if obs.confidence == 0:
+                    dbg = tracker.last_debug
+                    print(f"[{n:6d}] NO-LANE "
+                          f"{obs.detections[0].get('reason')} "
+                          f"(stasiun {dbg.get('stations_found')}/"
+                          f"{dbg.get('stations_total')}, "
+                          f"polarity {dbg.get('polarity')})")
+                elif n % 15 == 0:
+                    print(f"[{n:6d}] lat {obs.lane_error_m * 1000:+8.1f} mm  "
+                          f"head {math.degrees(obs.heading_error_rad):+6.2f}"
+                          f" deg  conf {obs.confidence:.2f}  "
+                          f"stasiun {tracker.last_debug.get('stations_found')}")
+        except KeyboardInterrupt:
+            print(f"\nstop setelah {n} frame")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Runtime robot MIZURO (Fase 0: fondasi)")
+        description="Runtime robot MIZURO (fondasi + bench persepsi)")
     parser.add_argument("--config", type=Path, default=Path("robot.json"),
                         help="file config JSON (default: robot.json)")
     parser.add_argument("--self-check", action="store_true",
                         help="verifikasi fondasi tanpa hardware")
+    parser.add_argument("--stream-only", action="store_true",
+                        help="bench: kamera + MJPEG + tracker lajur, tanpa "
+                             "motor (butuh /usr/bin/python3 di Jetson)")
     args = parser.parse_args()
 
     if args.self_check:
         self_check()
         return
-    if not args.config.is_file():
+    if args.config.is_file():
+        config = Config.load(args.config)
+    elif args.stream_only:
+        config = Config()   # default; mount disesuaikan di robot.json
+    else:
         raise SystemExit(
             f"config tidak ditemukan: {args.config}; "
             f"salin dari robot.example.json dan sesuaikan")
-    config = Config.load(args.config)
+    if args.stream_only:
+        stream_only(config)
+        return
     if not config.dry_run:
         raise SystemExit(
             "mode live belum diimplementasikan (Fase 3); "
