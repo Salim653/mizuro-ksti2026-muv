@@ -67,6 +67,11 @@ class CameraCalibration:
     fy: float = 0.0
     cx: float = 0.0
     cy: float = 0.0
+    # Koefisien distorsi (k1, k2, p1, p2, k3) dari kalibrasi terukur.
+    # Kosong = tidak ada koreksi distorsi (perilaku pinhole murni).
+    # Frame WAJIB di-undistort pakai K ini sebelum masuk tracker kalau
+    # dist tidak kosong (lihat Camera(undistort=...)).
+    dist: tuple = ()
 
     def __post_init__(self) -> None:
         if self.fx <= 0 or self.fy <= 0:
@@ -81,6 +86,21 @@ class CameraCalibration:
             raise ValueError("height_m harus positif")
         if abs(self.mount_x_m) > 2.0 or abs(self.mount_y_m) > 2.0:
             raise ValueError("offset mount kamera tidak masuk akal (> 2 m)")
+        if self.dist and len(self.dist) not in (4, 5, 8, 12, 14):
+            raise ValueError(
+                f"dist harus 4/5/8/12/14 koefisien, dapat {len(self.dist)}")
+
+    def camera_matrix(self) -> np.ndarray:
+        """Matriks intrinsik 3x3 buat cv2.undistort/calibrateCamera."""
+        return np.array([
+            [self.fx, 0.0, self.cx],
+            [0.0, self.fy, self.cy],
+            [0.0, 0.0, 1.0],
+        ])
+
+    def hfov_deg(self) -> float:
+        """Horizontal FOV efektif (derajat) — buat laporan kalibrasi."""
+        return math.degrees(2.0 * math.atan(self.width / (2.0 * self.fx)))
 
     # --- proyeksi titik ---
 
@@ -265,9 +285,12 @@ class CameraCalibration:
         "cx", "cy"} — fx/fy/cx/cy opsional (diturunkan dari hfov_default).
         Mount opsional: "mount_x_m", "mount_y_m", "mount_yaw_deg",
         "mount_roll_deg" (default 0 = kamera di titik referensi robot).
+        Distorsi opsional: "dist" (list 4/5/8/12/14 koefisien) — kalau
+        ada, frame harus di-undistort sebelum tracker (Camera).
         """
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         try:
+            dist = tuple(float(c) for c in data.get("dist", ()))
             return cls(
                 width=int(data["width"]), height=int(data["height"]),
                 height_m=float(data["height_m"]),
@@ -279,6 +302,7 @@ class CameraCalibration:
                 mount_roll_rad=math.radians(
                     float(data.get("mount_roll_deg", 0.0))),
                 fx=float(data.get("fx", 0)), fy=float(data.get("fy", 0)),
-                cx=float(data.get("cx", 0)), cy=float(data.get("cy", 0)))
+                cx=float(data.get("cx", 0)), cy=float(data.get("cy", 0)),
+                dist=dist)
         except KeyError as exc:
             raise ValueError(f"kalibrasi kurang field: {exc}") from exc

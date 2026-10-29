@@ -240,3 +240,43 @@ def test_from_json_accepts_mount(tmp_path):
 def test_absurd_mount_offset_rejected():
     with pytest.raises(ValueError):
         CameraCalibration(width=640, height=480, mount_x_m=5.0)
+
+
+# --- distorsi + matriks intrinsik ---
+
+def test_camera_matrix_matches_fields(calib):
+    k = calib.camera_matrix()
+    assert k.shape == (3, 3)
+    assert k[0, 0] == pytest.approx(calib.fx)
+    assert k[1, 1] == pytest.approx(calib.fy)
+    assert k[0, 2] == pytest.approx(calib.cx)
+    assert k[1, 2] == pytest.approx(calib.cy)
+    assert k[2, 2] == 1.0
+
+
+def test_hfov_matches_default(calib):
+    # Default intrinsik diturunkan dari hFOV 62 derajat.
+    assert calib.hfov_deg() == pytest.approx(62.0, abs=0.5)
+
+
+def test_dist_default_empty(calib):
+    assert calib.dist == ()
+
+
+def test_dist_wrong_length_rejected():
+    with pytest.raises(ValueError, match="dist"):
+        CameraCalibration(width=640, height=480, dist=(0.1, 0.2))
+
+
+def test_from_json_accepts_dist(tmp_path):
+    import json
+    p = tmp_path / "cal.json"
+    p.write_text(json.dumps({
+        "width": 640, "height": 480, "height_m": 0.18, "pitch_deg": 11.0,
+        "fx": 520.5, "fy": 521.0, "cx": 319.5, "cy": 241.2,
+        "dist": [-0.28, 0.07, 0.001, -0.002, 0.0]}), encoding="utf-8")
+    cal = CameraCalibration.from_json(p)
+    assert cal.fx == pytest.approx(520.5)
+    assert cal.dist == pytest.approx((-0.28, 0.07, 0.001, -0.002, 0.0))
+    # Matriks harus bisa langsung dipakai cv2.undistort.
+    assert cal.camera_matrix()[0, 0] == pytest.approx(520.5)

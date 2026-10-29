@@ -5,6 +5,36 @@ Riwayat paket runtime robot (`program/robot/`). Scaffold lama
 build baru dimulai. Format: satu entri per commit besar, plus catatan
 verifikasi dan yang BELUM diuji.
 
+## 2026-10-29 — Kalibrasi kamera: tools/calibrate.py + wiring homography_path
+
+Branch `feature/camera-mount-offset`.
+
+- `tools/calibrate.py` (baru): kalibrasi checkerboard -> intrinsik
+  terukur. Preview MJPEG live, deteksi sudut (adaptive threshold +
+  normalize, robust di lantai bertekstur), capture N frame dengan
+  anti-duplikat (papan harus pindah >= 30 px + jeda minimal), lalu
+  `cv2.calibrateCamera` (zero tangent, fix k3). Output JSON kompatibel
+  `from_json` + laporan rpe/hFOV. Frame tersimpan di
+  `runs/calib-frames/`; `--replay` hitung ulang tanpa kamera.
+  CATATAN: height_m & pitch TIDAK diukur alat ini — pengukuran fisik
+  dari robot.json/argumen.
+- `CameraCalibration`: field `dist` (koefisien distorsi, divalidasi
+  panjang), `camera_matrix()` (3x3 buat cv2), `hfov_deg()` (laporan).
+  `from_json` menerima "dist".
+- `Camera`: parameter `undistort=(K, dist)` — frame direktifikasi sekali
+  di read() kalau kalibrasi punya distorsi; ukuran tidak berubah jadi
+  validasi ukuran tetap jalan.
+- `main.py --stream-only`: `homography_path` (sebelumnya TIDAK PERNAH
+  di-load) sekarang dipakai — kalau di-set, kalibrasi terukur mengganti
+  default hFOV 62 deg dan undistort otomatis aktif. Log startup
+  mencetak sumber kalibrasi + hFOV efektif.
+- Tes: +14 (round-trip dist, camera_matrix, hfov, penolakan panjang
+  dist, undistort mengubah isi bukan ukuran, object_points, deteksi
+  checkerboard sintetis, kalibrasi recover intrinsik dikenal dalam
+  2%, zero-tangent by design, coverage hint). Total 174 lolos.
+- Belum diuji: kalibrasi dengan kamera NYATA (butuh checkerboard
+  cetak + LO jalankan di Jetson).
+
 ## 2026-10-29 — Bench: mode `--stream-only` (kamera + MJPEG + tracker)
 
 Branch `feature/camera-mount-offset`.

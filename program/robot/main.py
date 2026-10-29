@@ -158,7 +158,21 @@ def stream_only(config: Config) -> None:
     from mizuro.perception.classical import LaneTracker
     from mizuro.stream import FrameHub, MjpegServer
 
-    calib = CameraCalibration.from_config(config)
+    # Kalibrasi: homography_path (kalau di-set) = intrinsik TERUKUR dari
+    # tools/calibrate.py, termasuk distorsi. Tanpa itu, dari Config
+    # (hFOV default). Frame di-undistort sekali di Camera kalau ada dist.
+    if config.homography_path:
+        calib = CameraCalibration.from_json(config.homography_path)
+        undistort = ((calib.camera_matrix(), calib.dist)
+                     if calib.dist else None)
+        print(f"kalibrasi: {config.homography_path} "
+              f"(fx={calib.fx:.1f} hFOV={calib.hfov_deg():.1f} deg"
+              f"{', undistort ON' if undistort else ''})")
+    else:
+        calib = CameraCalibration.from_config(config)
+        undistort = None
+        print("kalibrasi: default (hFOV 62 deg) — set homography_path "
+              "di robot.json buat intrinsik terukur")
     tracker = LaneTracker(polarity=config.lane_polarity,
                           roi_top=config.lane_roi_top,
                           min_confidence=config.lane_min_confidence)
@@ -167,14 +181,14 @@ def stream_only(config: Config) -> None:
     dump_dir = Path(config.output_dir) / "bench-frames"
     dump_dir.mkdir(parents=True, exist_ok=True)
 
-    with Camera.from_config(config) as cam, \
+    with Camera.from_config(config, undistort=undistort) as cam, \
             MjpegServer.from_config(config, hub) as server:
         print(f"stream : {server.url}")
         print(f"kamera : {config.image_width}x{config.image_height} "
-              f"@{config.camera_fps}fps  mount z={config.mount_z_m} m "
-              f"pitch={config.mount_pitch_deg} deg x={config.mount_x_m} "
-              f"y={config.mount_y_m} yaw={config.mount_yaw_deg} "
-              f"roll={config.mount_roll_deg}")
+              f"@{config.camera_fps}fps  mount z={calib.height_m} m "
+              f"pitch={math.degrees(calib.pitch_rad)} deg x={calib.mount_x_m} "
+              f"y={calib.mount_y_m} yaw={math.degrees(calib.mount_yaw_rad)} "
+              f"roll={math.degrees(calib.mount_roll_rad)}")
         print(f"dump   : {dump_dir} (setiap frame ke-30)")
         print("Ctrl+C untuk berhenti")
         n = 0

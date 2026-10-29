@@ -46,7 +46,7 @@ class Camera:
     """
 
     def __init__(self, pipeline: str, width: int, height: int, *,
-                 opener=None) -> None:
+                 opener=None, undistort=None) -> None:
         import cv2
         self.cv2 = cv2
         if not has_gstreamer(cv2):
@@ -57,6 +57,10 @@ class Camera:
         self.pipeline = pipeline or nvargus_pipeline(width, height)
         self.width, self.height = width, height
         self._opener = opener
+        # undistort = (K 3x3, dist) dari kalibrasi terukur. Frame
+        # direktifikasi sekali di sini supaya semua hilir (tracker,
+        # homography) melihat gambar pinhole dengan K yang sama.
+        self._undistort = undistort
         self.cap = self._open()
 
     def _open(self):
@@ -72,7 +76,11 @@ class Camera:
         return cap
 
     def read(self):
-        """Satu frame BGR (height, width, 3). Melempar kalau gagal."""
+        """Satu frame BGR (height, width, 3). Melempar kalau gagal.
+
+        Kalau kalibrasi punya koefisien distorsi, frame di-undistort
+        dulu (ukuran tidak berubah — K yang sama dipakai tracker).
+        """
         ok, frame = self.cap.read()
         if not ok or frame is None:
             raise RuntimeError("pembacaan frame kamera gagal")
@@ -80,6 +88,9 @@ class Camera:
             raise RuntimeError(
                 f"ukuran frame tak terduga {frame.shape[1]}x{frame.shape[0]}, "
                 f"harap {self.width}x{self.height}")
+        if self._undistort is not None:
+            k_matrix, dist = self._undistort
+            frame = self.cv2.undistort(frame, k_matrix, dist)
         return frame
 
     def close(self) -> None:
@@ -94,7 +105,11 @@ class Camera:
         self.close()
 
     @classmethod
-    def from_config(cls, config, *, opener=None) -> "Camera":
-        """Bangun dari Config: pipeline kosong = CSI bawaan."""
+    def from_config(cls, config, *, opener=None,
+                    undistort=None) -> "Camera":
+        """Bangun dari Config: pipeline kosong = CSI bawaan.
+
+        `undistort` = (K, dist) opsional dari kalibrasi terukur.
+        """
         return cls(config.camera_pipeline, config.image_width,
-                   config.image_height, opener=opener)
+                   config.image_height, opener=opener, undistort=undistort)

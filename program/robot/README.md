@@ -81,6 +81,15 @@ serta test suite repo ini.
 - Mount 0.16 m / 12° hanya melihat lajur dari ~0.5 m di depan; heading
   adalah besaran lookahead. Truth dataset dipindah ke stasiun yang sama
   dengan fit sebelum dibandingkan (`tools/eval_perception.py`).
+- **Intrinsik default = tebakan hFOV 62°**, bukan ukuran. Untuk akurasi
+  tinggi: cetak checkerboard (hitam-di-putih, 9x6 sudut, kotak 25 mm),
+  jalankan `tools/calibrate.py` di Jetson, lalu set `homography_path`
+  di `robot.json` ke JSON hasilnya. `--stream-only` otomatis memakai
+  intrinsik terukur + undistort frame. Height/pitch TIDAK diukur alat
+  kalibrasi — itu tetap pengukuran fisik (field `mount_*`).
+- **findChessboardCorners butuh kotak GELAP di background TERANG** —
+  pola terbalik gagal total (tes sintetis membuktikan). Cetakan
+  standar hitam-di-putih aman.
 
 ## Peta fase
 

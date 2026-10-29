@@ -123,3 +123,39 @@ def test_from_config(monkeypatch):
     cam = Camera.from_config(cfg, opener=lambda p: FakeCapture(p))
     assert cam.pipeline == "pipa-cfg"
     assert (cam.width, cam.height) == (640, 480)
+
+
+def test_undistort_changes_frame_but_not_size(monkeypatch):
+    """distorsi nyata (barrel) -> isi frame berubah, ukuran sama."""
+    import cv2
+    monkeypatch.setattr("mizuro.camera.has_gstreamer", lambda cv2: True)
+    # Frame dengan gradien: distorsi barrel pasti menggeser piksel.
+    base = np.tile(np.arange(640, dtype=np.uint8), (480, 1))
+    frame = cv2.merge([base, base, base])
+    k = np.array([[500.0, 0, 320.0], [0, 500.0, 240.0], [0, 0, 1.0]])
+    dist = np.array([-0.3, 0.1, 0.0, 0.0, 0.0])   # barrel kuat
+    cam = Camera("pipa-uji", 640, 480,
+                 opener=lambda p: FakeCapture(p, frames=[frame.copy()]),
+                 undistort=(k, dist))
+    out = cam.read()
+    assert out.shape == (480, 640, 3)
+    assert not np.array_equal(out, frame)      # benar-benar dikoreksi
+
+
+def test_no_undistort_passes_frame_through(monkeypatch):
+    """Tanpa undistort, frame lewat apa adanya (perilaku lama)."""
+    monkeypatch.setattr("mizuro.camera.has_gstreamer", lambda cv2: True)
+    frame = np.full((480, 640, 3), 77, dtype=np.uint8)
+    cam = Camera("pipa-uji", 640, 480,
+                 opener=lambda p: FakeCapture(p, frames=[frame.copy()]))
+    assert np.array_equal(cam.read(), frame)
+
+
+def test_from_config_passes_undistort(monkeypatch):
+    monkeypatch.setattr("mizuro.camera.has_gstreamer", lambda cv2: True)
+    cfg = Config(camera_pipeline="pipa-cfg", image_width=640, image_height=480)
+    k = np.eye(3)
+    dist = np.zeros(5)
+    cam = Camera.from_config(cfg, opener=lambda p: FakeCapture(p),
+                             undistort=(k, dist))
+    assert cam._undistort is not None
