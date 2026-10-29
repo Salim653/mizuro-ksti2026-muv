@@ -176,6 +176,16 @@ def stream_only(config: Config) -> None:
     tracker = LaneTracker(polarity=config.lane_polarity,
                           roi_top=config.lane_roi_top,
                           min_confidence=config.lane_min_confidence)
+    # Detektor semantik (Fase 2): opsional, aktif kalau model_path di-set.
+    # Model COCO pretrained dipakai buat validasi pipeline; model arena
+    # (checkpoint) menggantinya nanti.
+    detector = None
+    if config.model_path:
+        from mizuro.perception.detector import SemanticDetector
+        detector = SemanticDetector(
+            config.model_path, config.confidence_threshold)
+        print(f"detektor: {config.model_path} "
+              f"(threshold {config.confidence_threshold})")
     hub = FrameHub(quality=config.stream_quality, fps=config.stream_fps,
                    width=config.stream_width, height=config.stream_height)
     dump_dir = Path(config.output_dir) / "bench-frames"
@@ -200,6 +210,13 @@ def stream_only(config: Config) -> None:
                 n += 1
                 if n % 30 == 0:
                     cv2.imwrite(str(dump_dir / f"frame-{n:06d}.jpg"), frame)
+                if detector is not None and n % 15 == 0:
+                    dets = detector.infer(frame)
+                    if dets:
+                        summary = ", ".join(
+                            f"{d.label}:{d.confidence:.2f}" for d in dets)
+                        print(f"[{n:6d}] DET   {summary} "
+                              f"({detector.last_inference_ms:.0f} ms)")
                 if obs.confidence == 0:
                     dbg = tracker.last_debug
                     print(f"[{n:6d}] NO-LANE "

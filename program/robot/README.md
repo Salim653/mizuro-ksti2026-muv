@@ -96,8 +96,10 @@ serta test suite repo ini.
 1. **Fase 0 — fondasi** ✅: config, state, protokol, log, test.
 2. **Fase 1 — persepsi lajur** (inti selesai): LaneTracker + eval sintetis;
    tinggal validasi bench dengan kamera asli (roda terangkat, `dry_run`).
-3. **Fase 2 — detektor semantik**: dataset dari sim → train YOLO-seg →
-   decoder ONNX + logika checkpoint.
+3. **Fase 2 — detektor semantik** (infrastruktur selesai): ONNX via
+   cv2.dnn + decode YOLO11-seg + NMS per-kelas + mask mapping; export
+   tool + bench integration. Tinggal: dataset arena-3d -> train kelas
+   checkpoint -> logika checkpoint.
 4. **Fase 3 — kontrol & closed-loop sim**: Stanley + speed profile,
    replay dataset, tuning hanya di sim.
 5. **Fase 4 — MCU & safety**: spesifikasi firmware STM32, protokol status

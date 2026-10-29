@@ -5,6 +5,40 @@ Riwayat paket runtime robot (`program/robot/`). Scaffold lama
 build baru dimulai. Format: satu entri per commit besar, plus catatan
 verifikasi dan yang BELUM diuji.
 
+## 2026-10-30 — Fase 2: detektor semantik ONNX (cv2.dnn)
+
+Branch `feature/camera-mount-offset`.
+
+- `mizuro/perception/detector.py` (baru): `SemanticDetector` —
+  frame BGR -> list[Detection] (class_id, label, confidence, bbox,
+  mask) via cv2.dnn. Kenapa cv2.dnn bukan onnxruntime: runtime WAJIB
+  /usr/bin/python3 (JetPack) dan di sana tidak ada onnxruntime.
+- Decode YOLO11-seg sebagai fungsi murni numpy (testable tanpa model):
+  `letterbox` (aspect-preserve + meta), `decode_yolo_seg` (116 =
+  4 bbox + 80 kelas + 32 koefisien mask; prototipe 32x160x160),
+  `nms_per_class` (per-kelas — objek kelas beda yang overlap tidak
+  saling menekan), `mask_to_original` (proto -> letterbox -> crop
+  bbox -> peta balik skala/pad -> frame asli).
+- Bug yang ketangkap tes: `squeeze(0)` gagal tanpa batch axis (pakai
+  `squeeze()`); NMS awal menghitung IoU box terhadap DIRINYA SENDIRI
+  bukan terhadap semua box (overlap lolos semua).
+- `tools/export_model.py` (baru): export .pt -> ONNX + PERINGATAN
+  venv (export ultralytics meng-upgrade numpy/opencv; kalau cv2 rusak:
+  pip install numpy==1.26.4 opencv-python==4.8.0.76).
+- `main.py --stream-only`: detektor ikut jalan kalau `model_path`
+  di-set (log label:conf tiap 15 frame + waktu inferensi).
+- `.gitignore`: `*.onnx` (model 11.7 MB tidak boleh ke repo).
+- Validasi: decode vs array sintetis layout asli (recover bbox/kelas/
+  mask); integrasi model nyata `yolo11n-seg.onnx` (COCO) — frame bench
+  terdeteksi person 0.82 / cup 0.82 / bottle 0.69 dengan mask; live
+  kamera via /usr/bin/python3: laptop 0.93, bottle 0.44.
+- Kinerja: ~260-310 ms/frame CPU. JetPack cv2 4.8.0 TIDAK di-build
+  dengan CUDA DNN backend (cek: "DNN module was not built with CUDA
+  backend"), jadi tidak ada akselerasi GPU via cv2.dnn. Kalau nanti
+  perlu lebih cepat: TensorRT atau onnxruntime-gpu (belum diuji).
+- Belum diuji: model kelas arena/checkpoint (butuh dataset arena-3d +
+  training); logika checkpoint (butuh spec arena).
+
 ## 2026-10-29 — Kalibrasi kamera: tools/calibrate.py + wiring homography_path
 
 Branch `feature/camera-mount-offset`.
