@@ -5,6 +5,37 @@ Riwayat paket runtime robot (`program/robot/`). Scaffold lama
 build baru dimulai. Format: satu entri per commit besar, plus catatan
 verifikasi dan yang BELUM diuji.
 
+## 2026-10-29 — Kamera: konfigurasi mount x/y/z + yaw/roll
+
+Branch `feature/camera-mount-offset`.
+
+- `Config`: enam field mount baru — `mount_x_m`, `mount_y_m`,
+  `mount_z_m`, `mount_pitch_deg`, `mount_yaw_deg`, `mount_roll_deg`.
+  Posisi meter, orientasi derajat (diukur di bench, bukan ditebak);
+  default = mount arena-3d (0.16 m / 12 derajat, offset 0). Rentang
+  divalidasi; ikut masuk `_check_types` dan `robot.example.json`.
+- `CameraCalibration`: field mount yang sama + `from_config()` (Config
+  -> kalibrasi, derajat -> radian). `pixel_to_ground`/`ground_to_pixel`
+  sekarang menerima/mengembalikan titik di frame ROBOT: roll dibatalkan
+  di ruang piksel (rotasi di sekitar titik principal), yaw + offset x/y
+  diterapkan setelah proyeksi pitch. Default 0 = perilaku pitch-only
+  persis; eval 100 frame identik (0.73 mm / 0.11 derajat) sebelum dan
+  sesudah patch.
+- `homography()` mengkomposisi roll (piksel) + pitch + yaw/offset
+  (tanah); `ground_from_pixels` ikut konsisten (diuji).
+- `horizon_row_worst`: batas ROI aman untuk horizon miring (roll).
+  Tracker memakainya; synth menggambar batas dinding miring per kolom
+  (`_above_horizon_mask`).
+- `from_hfov`/`from_json` menerima parameter mount (opsional);
+  `tools/eval_perception.py` dapat flag `--mount-x/-y/-yaw/-roll`.
+- Karakteristik terukur (bukan bug): offset x/y saja -> error 2.15 mm
+  (terjemahan murni tertangani eksak); yaw/roll -> 7.41 mm, residual dari
+  window pencarian stasiun yang terotasi + crop horizon miring yang
+  memotong stasiun jauh. Semua skenario masih LOLOS target Fase 1.
+- Tes: +20 (round-trip mount penuh, offset geser tepat, tanda yaw,
+  roll round-trip + end-to-end tracker kamera roll/offset, from_config,
+  from_json mount, rentang Config). Total 160 lolos.
+
 ## 2026-10-29 — Fase 1: persepsi lajur, kamera, stream, eval
 
 ### Persepsi (`mizuro/perception/`)

@@ -58,6 +58,11 @@ serta test suite repo ini.
 
 ### Catatan persepsi (pelajaran yang mahal)
 
+- **Mount kamera = bagian dari kalibrasi, bukan afterthought**: offset
+  x/y, yaw, roll semuanya menggeser estimasi lajur (bias = offset mount,
+  persis). Semua bisa di-set di `robot.json` (field `mount_*`, satuan
+  meter/derajat); default 0 = kamera tepat di titik referensi robot.
+  Output persepsi selalu di frame robot, siap dipakai controller.
 - **Urutan argumen** `ground_to_pixel(x_forward, y_right)` — tertukar di
   beberapa call site dulu dan jadi sumber bug berulang. Titik tanah di
   seluruh paket: `(forward, right)`.

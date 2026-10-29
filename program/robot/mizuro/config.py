@@ -35,6 +35,17 @@ class Config:
     image_height: int = 720
     camera_fps: int = 30
 
+    # --- posisi & orientasi kamera relatif titik referensi robot ---
+    # Titik referensi = poras belakang (default anchor arena-3d). Posisi
+    # dalam meter, orientasi dalam derajat — diukur saat bench, bukan
+    # ditebak. mount_z/pitch default = mount arena-3d.
+    mount_x_m: float = 0.0          # maju (+) / mundur (-) dari poras
+    mount_y_m: float = 0.0          # kanan (+) / kiri (-)
+    mount_z_m: float = 0.16         # tinggi lensa dari tanah
+    mount_pitch_deg: float = 12.0   # positif = lensa menghadap ke BAWAH
+    mount_yaw_deg: float = 0.0      # positif = optical axis ke KANAN robot
+    mount_roll_deg: float = 0.0     # positif = kamera roll CCW dari belakang
+
     # --- persepsi lajur (Fase 1) ---
     lane_polarity: str = "auto"      # auto | light_on_dark | dark_on_light
     lane_roi_top: float = 0.35       # batas atas ROI, fraksi tinggi frame
@@ -113,6 +124,16 @@ class Config:
                 f"lane_polarity harus salah satu dari {sorted(LANE_POLARITIES)}")
         if self.image_width <= 0 or self.image_height <= 0 or self.camera_fps <= 0:
             raise ValueError("dimensi dan fps kamera harus positif")
+        if not 0.0 < self.mount_z_m <= 1.0:
+            raise ValueError("mount_z_m harus dalam (0, 1] meter")
+        if abs(self.mount_x_m) > 1.0 or abs(self.mount_y_m) > 1.0:
+            raise ValueError(
+                "offset mount_x_m/mount_y_m tidak masuk akal (> 1 m)")
+        if not -80.0 <= self.mount_pitch_deg <= 80.0:
+            raise ValueError("mount_pitch_deg harus dalam [-80, 80] derajat")
+        if abs(self.mount_yaw_deg) > 45.0 or abs(self.mount_roll_deg) > 45.0:
+            raise ValueError(
+                "mount_yaw_deg/mount_roll_deg harus dalam ±45 derajat")
         if self.serial_baud <= 0:
             raise ValueError("serial_baud harus positif")
         if not 0.0 < self.max_speed_mps <= MAX_SPEED_MPS:
@@ -165,7 +186,9 @@ class Config:
         floats = ("confidence_threshold", "lane_min_confidence", "lane_roi_top",
                   "max_speed_mps", "steering_limit_rad", "lookahead_m",
                   "heading_gain", "lateral_gain", "max_lateral_accel",
-                  "loop_hz", "max_inference_ms", "run_timeout_s", "stream_fps")
+                  "loop_hz", "max_inference_ms", "run_timeout_s", "stream_fps",
+                  "mount_x_m", "mount_y_m", "mount_z_m", "mount_pitch_deg",
+                  "mount_yaw_deg", "mount_roll_deg")
         for name in bools:
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"tipe salah: {name} harus bool")

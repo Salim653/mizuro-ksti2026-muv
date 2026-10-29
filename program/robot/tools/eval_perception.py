@@ -78,7 +78,11 @@ def _report(name: str, lat: list[float], head_deg: list[float],
 
 def eval_synthetic(args: argparse.Namespace) -> bool:
     calib = CameraCalibration.from_hfov(args.width, args.height,
-                                        args.mount_height, args.mount_pitch)
+                                        args.mount_height, args.mount_pitch,
+                                        mount_x_m=args.mount_x,
+                                        mount_y_m=args.mount_y,
+                                        mount_yaw_deg=args.mount_yaw,
+                                        mount_roll_deg=args.mount_roll)
     tracker = LaneTracker(polarity=args.polarity, roi_top=args.roi_top,
                           near_m=args.near, far_m=args.far)
     rng = np.random.default_rng(args.seed)
@@ -207,6 +211,14 @@ def main() -> int:
     p.add_argument("--height", type=int, default=480)
     p.add_argument("--mount-height", type=float, default=0.16)
     p.add_argument("--mount-pitch", type=float, default=12.0)
+    p.add_argument("--mount-x", type=float, default=0.0,
+                   help="offset kamera maju dari poras (meter)")
+    p.add_argument("--mount-y", type=float, default=0.0,
+                   help="offset kamera kanan dari poras (meter)")
+    p.add_argument("--mount-yaw", type=float, default=0.0,
+                   help="yaw kamera (derajat, + = ke kanan robot)")
+    p.add_argument("--mount-roll", type=float, default=0.0,
+                   help="roll kamera (derajat, + = CCW dari belakang)")
     p.add_argument("--station", type=float, default=0.6,
                    help="stasiun lookahead evaluasi (meter)")
     p.add_argument("--near", type=float, default=0.5)

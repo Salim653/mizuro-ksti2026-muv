@@ -96,8 +96,10 @@ class LaneTracker:
         roi = gray[roi_row:, :]
 
         # Baris di atas horizon = dinding, bukan lantai: buang dari
-        # binarisasi DAN dari keputusan polaritas.
-        start = max(0, int(calib.horizon_row + 2.0) - roi_row)
+        # binarisasi DAN dari keputusan polaritas. horizon_row_worst
+        # (bukan horizon_row) supaya roll yang memiringkan horizon tidak
+        # membocorkan piksel dinding di salah satu tepi frame.
+        start = max(0, int(calib.horizon_row_worst + 2.0) - roi_row)
         body = roi[start:]
         if body.size == 0:
             return self._no_lane(timestamp, reason="ROI di atas horizon")

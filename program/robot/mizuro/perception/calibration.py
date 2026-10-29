@@ -16,6 +16,17 @@ membuangnya lewat W <= 0, bukan mengembalikan angka sampah.
 Mount default dari arena-3d: 0.16 m, pitch 12 derajat ke bawah, hFOV 62 derajat
 (Pi camera module v2). Dari situ tanah baru masuk frame ~0.22 m di depan
 kamera; fit lajur yang berguna mulai ~0.5 m.
+
+Mount lengkap (opsional; default 0 = kamera tepat di titik referensi
+robot, menghadap lurus, tanpa roll):
+
+    piksel -> roll dibatalkan di ruang piksel -> ray pitch -> tanah
+    frame-kamera -> rotasi yaw + geser (x, y) -> tanah frame-ROBOT.
+
+Output selalu di frame robot (titik referensi = poras, yang dipakai
+controller), bukan frame kamera. Tanpa offset, matematika di atas
+persis sama dengan versi pitch-only — tidak ada regresi untuk
+synth/eval yang tidak memakai mount.
 """
 from __future__ import annotations
 
@@ -43,6 +54,15 @@ class CameraCalibration:
     height: int
     height_m: float = DEFAULT_HEIGHT_M
     pitch_rad: float = math.radians(DEFAULT_PITCH_DEG)
+    # Posisi kamera relatif titik referensi robot (poras), meter:
+    # mount_x_m maju (+), mount_y_m kanan (+).
+    mount_x_m: float = 0.0
+    mount_y_m: float = 0.0
+    # Orientasi kamera, radian. yaw positif = optical axis mengarah ke
+    # KANAN robot. roll positif = kamera roll CCW dilihat dari belakang
+    # (sisi kanan frame melihat lebih banyak lantai).
+    mount_yaw_rad: float = 0.0
+    mount_roll_rad: float = 0.0
     fx: float = 0.0
     fy: float = 0.0
     cx: float = 0.0
@@ -59,55 +79,105 @@ class CameraCalibration:
             object.__setattr__(self, "cy", (self.height - 1) / 2.0)
         if self.height_m <= 0:
             raise ValueError("height_m harus positif")
+        if abs(self.mount_x_m) > 2.0 or abs(self.mount_y_m) > 2.0:
+            raise ValueError("offset mount kamera tidak masuk akal (> 2 m)")
 
     # --- proyeksi titik ---
 
     def pixel_to_ground(self, u, v):
-        """(u, v) -> (x_forward_m, y_right_m). Bisa array numpy.
+        """(u, v) -> (x_forward_m, y_right_m) di frame ROBOT.
 
         Titik di atas horizon (tidak menyentuh tanah) -> NaN, bukan angka
         palsu; pemanggil menyaring NaN sebelum fit.
+
+        Urutan transformasi (kebalikan ground_to_pixel):
+        1. Roll dibatalkan di ruang piksel: (u, v) dirotasi +roll di
+           sekitar titik principal.
+        2. Ray dengan pitch diproyeksikan ke tanah -> titik frame-kamera.
+        3. Titik frame-kamera dirotasi yaw lalu digeser (x, y) mount ->
+           frame robot.
         """
-        a = (np.asarray(u, dtype=float) - self.cx) / self.fx
-        b = (np.asarray(v, dtype=float) - self.cy) / self.fy
+        u = np.asarray(u, dtype=float)
+        v = np.asarray(v, dtype=float)
+        if self.mount_roll_rad:
+            du, dv = u - self.cx, v - self.cy
+            cr, sr = math.cos(self.mount_roll_rad), math.sin(self.mount_roll_rad)
+            u = self.cx + du * cr - dv * sr
+            v = self.cy + du * sr + dv * cr
+        a = (u - self.cx) / self.fx
+        b = (v - self.cy) / self.fy
         down = math.sin(self.pitch_rad) + b * math.cos(self.pitch_rad)
         with np.errstate(divide="ignore", invalid="ignore"):
             lam = np.where(down > 1e-9, self.height_m / down, np.nan)
             x = lam * (math.cos(self.pitch_rad) - b * math.sin(self.pitch_rad))
             y = lam * a
+        if self.mount_yaw_rad or self.mount_x_m or self.mount_y_m:
+            cw, sw = math.cos(self.mount_yaw_rad), math.sin(self.mount_yaw_rad)
+            x, y = (x * cw - y * sw + self.mount_x_m,
+                    x * sw + y * cw + self.mount_y_m)
         return x, y
 
     def ground_to_pixel(self, x_forward, y_right):
-        """(x_forward_m, y_right_m) -> (u, v). Kebalikan persis di atas tanah.
+        """(x_forward_m, y_right_m) frame ROBOT -> (u, v).
 
-        Turunan: vektor kamera->titik (x, y, h) searah dengan ray car-frame
-        (cos p - b sin p, a, sin p + b cos p); skala s = 1/(x cos p + h sin p),
-        lalu a = s*y dan b = (s*h - sin p)/cos p.
+        Kebalikan persis pixel_to_ground: titik robot digeser balik
+        (-x, -y), dirotasi -yaw ke frame kamera, diproyeksikan dengan
+        pitch, lalu dirotasi -roll di ruang piksel.
         """
         x = np.asarray(x_forward, dtype=float)
         y = np.asarray(y_right, dtype=float)
+        if self.mount_yaw_rad or self.mount_x_m or self.mount_y_m:
+            dx, dy = x - self.mount_x_m, y - self.mount_y_m
+            cw, sw = math.cos(self.mount_yaw_rad), math.sin(self.mount_yaw_rad)
+            x = dx * cw + dy * sw
+            y = -dx * sw + dy * cw
         s = 1.0 / (x * math.cos(self.pitch_rad)
                    + self.height_m * math.sin(self.pitch_rad))
         a = y * s
         b = (s * self.height_m - math.sin(self.pitch_rad)) \
             / math.cos(self.pitch_rad)
-        return self.cx + a * self.fx, self.cy + b * self.fy
+        u = self.cx + a * self.fx
+        v = self.cy + b * self.fy
+        if self.mount_roll_rad:
+            du, dv = u - self.cx, v - self.cy
+            cr, sr = math.cos(self.mount_roll_rad), math.sin(self.mount_roll_rad)
+            u = self.cx + du * cr + dv * sr
+            v = self.cy - du * sr + dv * cr
+        return u, v
 
     # --- homography (operasi batch) ---
 
     def homography(self) -> np.ndarray:
-        """Matriks 3x3 dengan [x, y, 1] ~ H @ [u, v, 1].
+        """Matriks 3x3 dengan [x, y, 1] ~ H @ [u, v, 1] — frame ROBOT.
 
-        Turunan langsung dari rumus ray di atas (lihat docstring modul).
-        Baris dengan W <= 0 = di atas horizon; bersihkan sebelum pakai.
+        Komposisi: piksel -> (rotasi roll di ruang piksel) -> proyeksi
+        pitch ke tanah frame-kamera -> (rotasi yaw + geser mount) ->
+        frame robot. Baris dengan W <= 0 = di atas horizon; bersihkan
+        sebelum pakai.
         """
         h, p = self.height_m, self.pitch_rad
         sp, cp = math.sin(p), math.cos(p)
-        return np.array([
+        H = np.array([
             [0.0,           -h * sp,        h * (self.fy * cp + sp * self.cy)],
             [h * self.fy / self.fx, 0.0,     -h * self.fy * self.cx / self.fx],
             [0.0,            cp,            sp * self.fy - cp * self.cy],
         ])
+        if self.mount_roll_rad:
+            # p' = pp + R(roll) @ (p - pp)  (lihat pixel_to_ground)
+            cr, sr = math.cos(self.mount_roll_rad), math.sin(self.mount_roll_rad)
+            H = H @ np.array([
+                [cr, -sr, self.cx - self.cx * cr + self.cy * sr],
+                [sr,  cr, self.cy - self.cx * sr - self.cy * cr],
+                [0.0, 0.0, 1.0],
+            ])
+        if self.mount_yaw_rad or self.mount_x_m or self.mount_y_m:
+            cw, sw = math.cos(self.mount_yaw_rad), math.sin(self.mount_yaw_rad)
+            H = np.array([
+                [cw, -sw, self.mount_x_m],
+                [sw,  cw, self.mount_y_m],
+                [0.0, 0.0, 1.0],
+            ]) @ H
+        return H
 
     def ground_from_pixels(self, uv: np.ndarray) -> np.ndarray:
         """Batch (N, 2) piksel -> (N, 2) tanah; baris horizon jadi NaN."""
@@ -124,6 +194,21 @@ class CameraCalibration:
     def horizon_row(self) -> float:
         """Baris tempat tanah menghilang (v tak hingga)."""
         return self.cy - self.fy * math.tan(self.pitch_rad)
+
+    @property
+    def horizon_row_worst(self) -> float:
+        """Baris horizon terjauh ke BAWAH di seluruh lebar frame.
+
+        Roll memiringkan horizon di gambar (lihat
+        synth._above_horizon_mask); tracker WAJIB crop ROI di bawah baris
+        ini supaya tidak ada piksel dinding yang masuk. Roll 0 -> sama
+        dengan horizon_row.
+        """
+        if not self.mount_roll_rad:
+            return self.horizon_row
+        cr = math.cos(self.mount_roll_rad)
+        base = self.cy + (self.horizon_row - self.cy) / cr
+        return base + (self.width / 2.0) * abs(math.tan(self.mount_roll_rad))
 
     def forward_range(self, roi_top_frac: float = 0.35) -> tuple[float, float]:
         """Rentar jarak maju yang terlihat: (terdekat di bawah frame, terjauh
@@ -143,11 +228,34 @@ class CameraCalibration:
 
     @classmethod
     def from_hfov(cls, width: int, height: int, height_m: float,
-                  pitch_deg: float, hfov_deg: float = DEFAULT_HFOV_DEG) -> "CameraCalibration":
+                  pitch_deg: float, hfov_deg: float = DEFAULT_HFOV_DEG, *,
+                  mount_x_m: float = 0.0, mount_y_m: float = 0.0,
+                  mount_yaw_deg: float = 0.0,
+                  mount_roll_deg: float = 0.0) -> "CameraCalibration":
         f = (width / 2.0) / math.tan(math.radians(hfov_deg) / 2.0)
         return cls(width=width, height=height, height_m=height_m,
                    pitch_rad=math.radians(pitch_deg), fx=f, fy=f,
-                   cx=(width - 1) / 2.0, cy=(height - 1) / 2.0)
+                   cx=(width - 1) / 2.0, cy=(height - 1) / 2.0,
+                   mount_x_m=mount_x_m, mount_y_m=mount_y_m,
+                   mount_yaw_rad=math.radians(mount_yaw_deg),
+                   mount_roll_rad=math.radians(mount_roll_deg))
+
+    @classmethod
+    def from_config(cls, config) -> "CameraCalibration":
+        """Bangun dari Config robot (robot.json): mount lengkap.
+
+        Config memakai DERAJAT untuk orientasi (diukur dengan protractor
+        di bench); di sini dikonversi ke radian. Intrinsik masih dari
+        hFOV default — untuk akurasi tinggi pakai from_json dengan
+        kalibrasi terukur (lihat homography_path di Config).
+        """
+        return cls(
+            width=config.image_width, height=config.image_height,
+            height_m=config.mount_z_m,
+            pitch_rad=math.radians(config.mount_pitch_deg),
+            mount_x_m=config.mount_x_m, mount_y_m=config.mount_y_m,
+            mount_yaw_rad=math.radians(config.mount_yaw_deg),
+            mount_roll_rad=math.radians(config.mount_roll_deg))
 
     @classmethod
     def from_json(cls, path: str | Path) -> "CameraCalibration":
@@ -155,6 +263,8 @@ class CameraCalibration:
 
         Format: {"width", "height", "height_m", "pitch_deg", "fx", "fy",
         "cx", "cy"} — fx/fy/cx/cy opsional (diturunkan dari hfov_default).
+        Mount opsional: "mount_x_m", "mount_y_m", "mount_yaw_deg",
+        "mount_roll_deg" (default 0 = kamera di titik referensi robot).
         """
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         try:
@@ -162,6 +272,12 @@ class CameraCalibration:
                 width=int(data["width"]), height=int(data["height"]),
                 height_m=float(data["height_m"]),
                 pitch_rad=math.radians(float(data["pitch_deg"])),
+                mount_x_m=float(data.get("mount_x_m", 0.0)),
+                mount_y_m=float(data.get("mount_y_m", 0.0)),
+                mount_yaw_rad=math.radians(
+                    float(data.get("mount_yaw_deg", 0.0))),
+                mount_roll_rad=math.radians(
+                    float(data.get("mount_roll_deg", 0.0))),
                 fx=float(data.get("fx", 0)), fy=float(data.get("fy", 0)),
                 cx=float(data.get("cx", 0)), cy=float(data.get("cy", 0)))
         except KeyError as exc:

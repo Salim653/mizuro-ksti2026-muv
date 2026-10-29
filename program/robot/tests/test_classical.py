@@ -236,3 +236,32 @@ def test_single_run_skipped_in_pass1_but_used_in_pass2(tracker, calib):
 def test_half_width_constant_matches_guidebook():
     # Lebar lajur 0.50 m -> setengah 0.25 m.
     assert LANE_HALF_WIDTH_M == 0.25
+
+
+def test_tracker_survives_rolled_camera(tracker, calib):
+    # Kamera roll 3 derajat: frame synth konsisten (dinding miring,
+    # lajur diproyeksikan lewat transformasi roll) dan tracker harus
+    # tetap recover — ROI crop pakai horizon_row_worst.
+    rolled = CameraCalibration.from_hfov(640, 480, 0.16, 12.0,
+                                         mount_roll_deg=3.0)
+    truth = LaneTruth(0.02, 0.01, 0.05, polarity="light_on_dark")
+    frame, gt = render_lane_frame(rolled, truth, seed=4)
+    obs = tracker.estimate(frame, rolled, 0.0)
+    assert obs.confidence > 0.5
+    assert obs.lane_error_m == pytest.approx(gt["lateral_m"], abs=0.02)
+    assert obs.heading_error_rad == pytest.approx(gt["heading_rad"], abs=0.05)
+
+
+def test_tracker_with_offset_mount_stays_accurate(tracker, calib):
+    # Kamera maju 10 cm dari poras: output tracker adalah state lajur
+    # di frame ROBOT pada stasiun lookahead — ground truth synth juga
+    # robot-frame, jadi akurasi harus tetap mm-level.
+    moved = CameraCalibration.from_hfov(640, 480, 0.16, 12.0,
+                                        mount_x_m=0.10, mount_y_m=0.02,
+                                        mount_yaw_deg=2.0)
+    truth = LaneTruth(-0.03, 0.02, -0.06, polarity="dark_on_light")
+    frame, gt = render_lane_frame(moved, truth, seed=6)
+    obs = tracker.estimate(frame, moved, 0.0)
+    assert obs.confidence > 0.5
+    assert obs.lane_error_m == pytest.approx(gt["lateral_m"], abs=0.02)
+    assert obs.heading_error_rad == pytest.approx(gt["heading_rad"], abs=0.05)

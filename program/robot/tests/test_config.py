@@ -87,6 +87,12 @@ def test_wrong_type_rejected(tmp_path):
     {"stream_width": -1},
     {"save_frames": True},          # butuh live
     {"dry_run": False},             # live tanpa serial_device/model_path
+    {"mount_z_m": 0.0},
+    {"mount_z_m": 1.5},
+    {"mount_x_m": 5.0},
+    {"mount_pitch_deg": 90.0},
+    {"mount_yaw_deg": 60.0},
+    {"mount_roll_deg": -60.0},
 ])
 def test_invalid_values_rejected(patch):
     with pytest.raises(ValueError):
@@ -99,6 +105,7 @@ def test_invalid_values_rejected(patch):
     {"stream_port": True},           # bool adalah int di Python — harus ditolak
     {"image_width": 1280.0},         # float untuk field integer
     {"stream_host": 8080},           # angka untuk field string
+    {"mount_z_m": "0.16"},           # string untuk field float mount
 ])
 def test_wrong_scalar_types_rejected(patch):
     with pytest.raises(ValueError, match="[Tt]ipe"):
@@ -121,3 +128,27 @@ def test_live_mode_requires_serial_and_model():
     cfg = Config(dry_run=False, serial_device="/dev/ttyTHS1",
                  model_path="m.onnx", save_frames=True)
     cfg.validate()  # lengkap: tidak melempar
+
+
+def test_mount_defaults_match_arena3d():
+    cfg = Config()
+    assert cfg.mount_z_m == 0.16 and cfg.mount_pitch_deg == 12.0
+    assert cfg.mount_x_m == 0.0 and cfg.mount_y_m == 0.0
+    assert cfg.mount_yaw_deg == 0.0 and cfg.mount_roll_deg == 0.0
+
+
+def test_mount_ranges_rejected():
+    with pytest.raises(ValueError, match="mount_z_m"):
+        Config(mount_z_m=0.0).validate()
+    with pytest.raises(ValueError, match="mount_z_m"):
+        Config(mount_z_m=2.0).validate()
+    with pytest.raises(ValueError, match="mount_x_m"):
+        Config(mount_x_m=5.0).validate()
+    with pytest.raises(ValueError, match="mount_y_m"):
+        Config(mount_y_m=-5.0).validate()
+    with pytest.raises(ValueError, match="mount_pitch_deg"):
+        Config(mount_pitch_deg=90.0).validate()
+    with pytest.raises(ValueError, match="mount_yaw_deg"):
+        Config(mount_yaw_deg=60.0).validate()
+    with pytest.raises(ValueError, match="mount_roll_deg"):
+        Config(mount_roll_deg=-60.0).validate()

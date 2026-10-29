@@ -83,6 +83,31 @@ def _quad(calib: CameraCalibration, y0: float, y1: float,
     return pts
 
 
+def _above_horizon_mask(calib: CameraCalibration,
+                        h: int, w: int) -> np.ndarray:
+    """Mask piksel di atas horizon (roll-aware), bentuk (h, w).
+
+    Horizon tak-roll adalah baris v_h; roll memutarnya -roll di sekitar
+    titik principal (lihat calibration.ground_to_pixel). Untuk kolom u:
+
+        v_horizon(u) = cy + (v_h - cy)/cos r - tan r * (u - cx)
+
+    Roll 0 -> mask persis sama dengan potongan baris datar.
+    """
+    v_h = calib.horizon_row
+    if v_h <= 0:
+        return np.zeros((h, w), dtype=bool)
+    u = np.arange(w, dtype=float)
+    if calib.mount_roll_rad:
+        cr, sr = math.cos(calib.mount_roll_rad), math.sin(calib.mount_roll_rad)
+        v_horizon = (calib.cy + (v_h - calib.cy) / cr
+                     - sr / cr * (u - calib.cx))
+    else:
+        v_horizon = np.full(w, v_h)
+    rows = np.arange(h, dtype=float)[:, None]
+    return rows < v_horizon[None, :]
+
+
 def render_lane_frame(calib: CameraCalibration, truth: LaneTruth, *,
                       seed: int = 0, noise_sigma: float = 4.0,
                       blur_sigma: float = 1.2,
@@ -106,9 +131,9 @@ def render_lane_frame(calib: CameraCalibration, truth: LaneTruth, *,
     paint = PAINT_LIGHT if light_paint else PAINT_DARK
 
     frame = np.full((h, w, 3), floor, dtype=np.uint8)
-    horizon = int(calib.horizon_row)
-    if horizon > 0:
-        frame[:max(horizon, 0), :] = wall
+    # Dinding di atas horizon; batasnya per kolom supaya konsisten
+    # dengan proyeksi roll (lihat _above_horizon_mask).
+    frame[_above_horizon_mask(calib, h, w)] = wall
 
     y_near, y_far = calib.forward_range(roi_top)
     y_far = max(y_far, y_near + 0.5)
