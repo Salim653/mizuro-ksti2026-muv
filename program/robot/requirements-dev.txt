@@ -1,0 +1,8 @@
+# Lingkungan pengembangan di laptop (tanpa kamera, tanpa serial).
+#
+# pytest untuk tests/. numpy + opencv-python-headless dipakai mulai Fase 1
+# (geometri lajur) — headless aman di laptop karena tidak pernah membuka
+# kamera; TIDAK untuk runtime Jetson (lihat requirements.txt).
+pytest
+numpy
+opencv-python-headless

@@ -1,0 +1,7 @@
+# Runtime robot di Jetson. pyserial adalah satu-satunya dependensi Python.
+#
+# cv2 dan numpy TIDAK di-list di sini: pakai OpenCV JetPack
+# (/usr/bin/python3) yang membawa backend GStreamer. JANGAN pernah
+# `pip install opencv-python` di Jetson — wheel pip tidak punya GStreamer
+# dan camera.py akan gagal membuka kamera CSI.
+pyserial

@@ -1,0 +1,18 @@
+(.venv) kazero@kazero:~/mizuro-ksti2026-muv/program/jetson$ python3 main.py --stream-only --config robot.json
+2026-10-22 13:12:20,036 ERROR stream fault
+Traceback (most recent call last):
+  File "/home/kazero/mizuro-ksti2026-muv/program/jetson/main.py", line 81, in serve_stream_only
+    camera = Camera(config.camera_pipeline, config.image_width, config.image_height)
+  File "/home/kazero/mizuro-ksti2026-muv/program/jetson/camera.py", line 22, in __init__
+    raise RuntimeError("GStreamer camera pipeline failed to open")
+RuntimeError: GStreamer camera pipeline failed to open
+Traceback (most recent call last):
+  File "/home/kazero/mizuro-ksti2026-muv/program/jetson/main.py", line 228, in <module>
+    main()
+  File "/home/kazero/mizuro-ksti2026-muv/program/jetson/main.py", line 222, in main
+    serve_stream_only(config)
+  File "/home/kazero/mizuro-ksti2026-muv/program/jetson/main.py", line 81, in serve_stream_only
+    camera = Camera(config.camera_pipeline, config.image_width, config.image_height)
+  File "/home/kazero/mizuro-ksti2026-muv/program/jetson/camera.py", line 22, in __init__
+    raise RuntimeError("GStreamer camera pipeline failed to open")
+RuntimeError: GStreamer camera pipeline failed to open
