@@ -103,7 +103,10 @@ serta test suite repo ini.
 4. **Fase 3 — kontrol** ( Stanley + speed profile selesai): replay sim
    against track geometry lolos (converge <5mm steady-state). Tinggal:
    tuning terhadap persepsi nyata (butuh mock lane/arena).
-5. **Fase 4 — MCU & safety**: spesifikasi firmware STM32, protokol status
+5. **Fase 4 — closed-loop + MCU** (runner selesai): `--closed-loop`
+   persepsi -> Stanley -> MCU, dry_run default. Tinggal: MCU status
+   protocol (feedback MCU -> Jetson), bench roda terangkat.
+6. **Fase 5 — checkpoint**: butuh spec Technical Meeting + dataset.
    balik, timer 300 s, persistensi checkpoint.
 
 ## Keselamatan

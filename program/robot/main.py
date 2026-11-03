@@ -2,13 +2,15 @@
 """Runtime robot MIZURO.
 
 Yang sudah ada: config tervalidasi, state machine, protokol serial, log run,
-self-check, dan mode bench `--stream-only` (kamera + MJPEG + tracker lajur,
-TANPA motor). Loop kontrol (lajur -> kontrol -> MCU) datang di Fase 3;
-sampai itu ada, mode live sengaja DITOLAK alih-alih setengah jalan.
+self-check, mode bench `--stream-only` (kamera + MJPEG + tracker lajur,
+TANPA motor), dan mode closed-loop `--closed-loop` (persepsi -> Stanley ->
+MCU, dry_run default). Mode live dengan motor butuh dry_run=false +
+roda terangkat + E-stop fisik.
 """
 from __future__ import annotations
 
 import argparse
+import math
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
@@ -233,9 +235,78 @@ def stream_only(config: Config) -> None:
             print(f"\nstop setelah {n} frame")
 
 
+def run_closed(config: Config) -> None:
+    """Fase 4: loop kontrol tertutup — persepsi -> Stanley -> MCU.
+
+    dry_run default true: loop penuh berjalan (kamera, tracker,
+    controller, telemetry), MCU tidak menulis serial. Output command
+    di-log untuk analisis sebelum motor pernah menyala.
+
+    Motor hanya menyala kalau dry_run=false DAN roda terangkat DAN
+    E-stop fisik terpasang. Jangan skip salah satu.
+    """
+    import cv2
+
+    from mizuro.camera import Camera
+    from mizuro.controller import StanleyController
+    from mizuro.perception.calibration import CameraCalibration
+    from mizuro.perception.classical import LaneTracker
+    from mizuro.runner import ClosedLoopRunner
+
+    if config.homography_path:
+        calib = CameraCalibration.from_json(config.homography_path)
+        undistort = ((calib.camera_matrix(), calib.dist)
+                     if calib.dist else None)
+        print(f"kalibrasi: {config.homography_path} "
+              f"(fx={calib.fx:.1f} hFOV={calib.hfov_deg():.1f} deg"
+              f"{', undistort ON' if undistort else ''})")
+    else:
+        calib = CameraCalibration.from_config(config)
+        undistort = None
+        print("kalibrasi: default (hFOV 62 deg) — set homography_path "
+              "di robot.json buat intrinsik terukur")
+
+    tracker = LaneTracker(polarity=config.lane_polarity,
+                          roi_top=config.lane_roi_top,
+                          min_confidence=config.lane_min_confidence)
+    controller = StanleyController.from_config(config)
+
+    detector = None
+    if config.model_path:
+        from mizuro.perception.detector import SemanticDetector
+        detector = SemanticDetector(
+            config.model_path, config.confidence_threshold)
+        print(f"detektor: {config.model_path} "
+              f"(threshold {config.confidence_threshold})")
+
+    with RunLog(config.output_dir) as log, \
+            Camera.from_config(config, undistort=undistort) as cam, \
+            McuLink(config.serial_device, config.serial_baud,
+                    dry_run=config.dry_run) as mcu:
+        machine = StateMachine()
+        runner = ClosedLoopRunner(
+            camera=cam, tracker=tracker, controller=controller, mcu=mcu,
+            log=log, machine=machine, calib=calib,
+            loop_hz=config.loop_hz, run_timeout_s=config.run_timeout_s,
+            max_inference_ms=config.max_inference_ms, detector=detector)
+        mode = "DRY-RUN (tanpa serial)" if config.dry_run \
+            else "LIVE (motor aktif!)"
+        print(f"closed-loop: {mode}")
+        print(f"loop       : {config.loop_hz} Hz, timeout "
+              f"{config.run_timeout_s:.0f}s")
+        print(f"log        : {log.path}")
+        print("Ctrl+C untuk berhenti")
+        runner.run()
+        print(f"\nSelesai: {runner.iterations} iterasi, "
+              f"{runner.overruns} overrun, "
+              f"{runner.lane_lost_count} frame lajur hilang")
+        print(f"Log: {log.path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Runtime robot MIZURO (fondasi + bench persepsi)")
+        description="Runtime robot MIZURO (fondasi + bench persepsi + "
+                    "closed-loop)")
     parser.add_argument("--config", type=Path, default=Path("robot.json"),
                         help="file config JSON (default: robot.json)")
     parser.add_argument("--self-check", action="store_true",
@@ -243,6 +314,10 @@ def main() -> None:
     parser.add_argument("--stream-only", action="store_true",
                         help="bench: kamera + MJPEG + tracker lajur, tanpa "
                              "motor (butuh /usr/bin/python3 di Jetson)")
+    parser.add_argument("--closed-loop", action="store_true",
+                        help="Fase 4: persepsi -> Stanley -> MCU. dry_run "
+                             "default true (tanpa serial). Motor hanya "
+                             "nyala kalau dry_run=false + roda terangkat")
     args = parser.parse_args()
 
     if args.self_check:
@@ -250,7 +325,7 @@ def main() -> None:
         return
     if args.config.is_file():
         config = Config.load(args.config)
-    elif args.stream_only:
+    elif args.stream_only or args.closed_loop:
         config = Config()   # default; mount disesuaikan di robot.json
     else:
         raise SystemExit(
@@ -259,9 +334,12 @@ def main() -> None:
     if args.stream_only:
         stream_only(config)
         return
+    if args.closed_loop:
+        run_closed(config)
+        return
     if not config.dry_run:
         raise SystemExit(
-            "mode live belum diimplementasikan (Fase 3); "
+            "mode live butuh --closed-loop; "
             "set dry_run=true untuk uji fondasi")
     boot_dry(config)
 

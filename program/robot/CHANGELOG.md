@@ -5,6 +5,35 @@ Riwayat paket runtime robot (`program/robot/`). Scaffold lama
 build baru dimulai. Format: satu entri per commit besar, plus catatan
 verifikasi dan yang BELUM diuji.
 
+## 2026-11-03 — Fase 4: closed-loop runner (persepsi -> Stanley -> MCU)
+
+Branch `feature/camera-mount-offset`.
+
+- `mizuro/runner.py` (baru): `ClosedLoopRunner` — satu loop kontrol
+  dengan semua dependensi disuntik (kamera, tracker, controller, mcu,
+  log, state machine) supaya bisa diuji TANPA hardware.
+- Kontrak keselamatan yang ditegakkan loop:
+  1. Setiap iterasi WAJIB kirim setpoint ke MCU (watchdog 100 ms) —
+     bahkan nol saat berhenti. Ini heartbeat.
+  2. Confidence 0 / lajur hilang -> controller kirim nol; state ->
+     DEGRADED tapi loop TETAP JALAN (robot berhenti, bukan crash).
+  3. Loop overrun (> 1/loop_hz) di-log; bukan fatal.
+  4. Timeout run (default 300 s) -> STOPPED.
+  5. Detektor error TIDAK menghentikan loop — di-log, loop lanjut.
+- `main.py --closed-loop`: mode closed-loop. dry_run default true
+  (loop penuh jalan, MCU tidak menulis serial). Motor hanya nyala
+  kalau dry_run=false + roda terangkat + E-stop fisik.
+- `tests/test_runner.py` (baru): 11 tes — heartbeat setiap iterasi,
+  lane lost -> DEGRADED, lane recovered -> RUNNING, no-lane kirim
+  nol, shutdown kirim nol final, dry_run tidak sentuh serial,
+  detektor error tidak stop loop, telemetry rows ditulis.
+- Fix test detektor: frame bench terakhir bisa 0 byte (proses di-kill
+  saat nulis) — test sekarang buang file kosong dan verifikasi
+  pipeline jalan, bukan objek spesifik (frame lane wajar kosong
+  untuk model COCO).
+- Belum diuji: closed-loop dengan kamera asli (butuh bench roda
+  terangkat); MCU status protocol (MCU -> Jetson feedback).
+
 ## 2026-10-30 — Fase 3: controller Stanley + speed profile + replay sim
 
 Branch `feature/camera-mount-offset`.
