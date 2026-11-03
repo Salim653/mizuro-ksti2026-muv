@@ -5,6 +5,44 @@ Riwayat paket runtime robot (`program/robot/`). Scaffold lama
 build baru dimulai. Format: satu entri per commit besar, plus catatan
 verifikasi dan yang BELUM diuji.
 
+## 2026-11-03 — Fase 5 (groundwork): checkpoint_mode + detektor CV klasik
+
+Branch `feature/camera-mount-offset`.
+
+- `mizuro/perception/checkpoint_cv.py` (baru): `CheckpointDetectorCV` —
+  detektor checkpoint classical CV, nol training. Threshold warna HSV
+  + morphology (open/close) + filter kontur (area, solidity).
+  Mengembalikan tipe `Detection` yang sama dengan `SemanticDetector`,
+  jadi pemanggil tidak peduli backend mana yang aktif.
+  Preset warna: green/red/orange/yellow/blue (bisa di-override
+  dengan rentang HSV eksplisit di config). ~5 ms/frame.
+- Config: field baru `checkpoint_mode` ("none" | "cv" | "model"),
+  `checkpoint_color`, `checkpoint_hsv_low/high`,
+  `checkpoint_min_area_px`, `checkpoint_max_area_px`,
+  `checkpoint_min_solidity`, `checkpoint_label`. Default "none" =
+  detektor mati, lane keeping tetap jalan penuh.
+- `Config.validate()`: `checkpoint_mode` harus salah satu dari
+  none/cv/model; mode "model" mensyaratkan `model_path`; HSV harus
+  tuple 3 angka (atau kosong = preset) dengan low <= high per kanal;
+  area & solidity divalidasi rentangnya.
+- Perubahan semantik live: `model_path` TIDAK lagi wajib saat
+  `dry_run=false` — yang mengatur adalah `checkpoint_mode`. Live
+  dengan `checkpoint_mode: "cv"` jalan tanpa model sama sekali.
+- `main.py`: helper `build_detector(config)` dipakai bersama oleh
+  `--stream-only` dan `--closed-loop`; pilih backend dari
+  `checkpoint_mode`.
+- `robot.example.json`: semua field checkpoint baru ditambahkan
+  (tes `test_example_config_matches_dataclass_fields` menegakkan).
+- `tests/test_checkpoint_cv.py` (baru): 22 tes — blob solid terdeteksi,
+  frame kosong/None aman, filter area (kecil/besar) ditolak, filter
+  solidity (garis diagonal, cross) ditolak, kelima preset warna,
+  override HSV eksplisit, `from_config`, kecepatan < 50 ms/frame.
+- `tests/test_config.py`: tes baru untuk validasi checkpoint_mode,
+  HSV, area, solidity; tes live-mode disesuaikan dengan semantik baru.
+- Belum diuji: detektor CV terhadap frame arena ASLI (butuh foto
+  arena / spec checkpoint dari Technical Meeting 8 Nov). Threshold
+  warna kemungkinan perlu tuning terhadap pencahayaan nyata.
+
 ## 2026-11-03 — Fase 4: closed-loop runner (persepsi -> Stanley -> MCU)
 
 Branch `feature/camera-mount-offset`.

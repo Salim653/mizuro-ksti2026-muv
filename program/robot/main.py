@@ -135,6 +135,36 @@ def boot_dry(config: Config) -> None:
             log.event("shutdown", state=machine.state.name, reason=machine.reason)
 
 
+def build_detector(config: Config):
+    """Pilih backend detektor checkpoint dari `checkpoint_mode`.
+
+    none = mati (default; lane keeping tetap jalan penuh)
+    cv   = classical CV warna/bentuk (nol training)
+    model = YOLO ONNX (butuh model terlatih kelas arena)
+
+    Detektor TIDAK mengontrol robot — hasilnya cuma masuk log.
+    """
+    mode = config.checkpoint_mode
+    if mode == "none":
+        return None
+    if mode == "cv":
+        from mizuro.perception.checkpoint_cv import CheckpointDetectorCV
+        det = CheckpointDetectorCV.from_config(config)
+        print(f"detektor: CV klasik (warna {config.checkpoint_color}, "
+              f"area {config.checkpoint_min_area_px}"
+              f"-{config.checkpoint_max_area_px} px, "
+              f"solidity >= {config.checkpoint_min_solidity})")
+        return det
+    if mode == "model":
+        from mizuro.perception.detector import SemanticDetector
+        det = SemanticDetector(
+            config.model_path, config.confidence_threshold)
+        print(f"detektor: {config.model_path} "
+              f"(threshold {config.confidence_threshold})")
+        return det
+    raise ValueError(f"checkpoint_mode tidak dikenal: {mode}")
+
+
 def stream_only(config: Config) -> None:
     """Bench: kamera CSI + MJPEG + tracker lajur. TANPA motor, TANPA serial.
 
@@ -178,16 +208,9 @@ def stream_only(config: Config) -> None:
     tracker = LaneTracker(polarity=config.lane_polarity,
                           roi_top=config.lane_roi_top,
                           min_confidence=config.lane_min_confidence)
-    # Detektor semantik (Fase 2): opsional, aktif kalau model_path di-set.
-    # Model COCO pretrained dipakai buat validasi pipeline; model arena
-    # (checkpoint) menggantinya nanti.
-    detector = None
-    if config.model_path:
-        from mizuro.perception.detector import SemanticDetector
-        detector = SemanticDetector(
-            config.model_path, config.confidence_threshold)
-        print(f"detektor: {config.model_path} "
-              f"(threshold {config.confidence_threshold})")
+    # Detektor checkpoint: opsional, dikendalikan checkpoint_mode.
+    # Tidak memblokir loop; hasilnya cuma masuk log.
+    detector = build_detector(config)
     hub = FrameHub(quality=config.stream_quality, fps=config.stream_fps,
                    width=config.stream_width, height=config.stream_height)
     dump_dir = Path(config.output_dir) / "bench-frames"
@@ -271,13 +294,7 @@ def run_closed(config: Config) -> None:
                           min_confidence=config.lane_min_confidence)
     controller = StanleyController.from_config(config)
 
-    detector = None
-    if config.model_path:
-        from mizuro.perception.detector import SemanticDetector
-        detector = SemanticDetector(
-            config.model_path, config.confidence_threshold)
-        print(f"detektor: {config.model_path} "
-              f"(threshold {config.confidence_threshold})")
+    detector = build_detector(config)
 
     with RunLog(config.output_dir) as log, \
             Camera.from_config(config, undistort=undistort) as cam, \

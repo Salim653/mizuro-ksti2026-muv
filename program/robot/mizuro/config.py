@@ -15,6 +15,7 @@ from .protocol import DEFAULT_BAUD, MAX_SPEED_MPS, MAX_STEER_RAD
 
 MOTOR_DRIVERS = {"external_esc", "mcu_hbridge"}
 LANE_POLARITIES = {"auto", "light_on_dark", "dark_on_light"}
+CHECKPOINT_MODES = {"none", "cv", "model"}
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,18 @@ class Config:
     # --- detektor semantik (Fase 2) ---
     model_path: str = ""
     confidence_threshold: float = 0.5
+
+    # --- deteksi checkpoint (Fase 5) ---
+    # none = mati (lane keeping tetap jalan) | cv = classical CV warna
+    # | model = YOLO ONNX (butuh model terlatih kelas arena)
+    checkpoint_mode: str = "none"
+    checkpoint_color: str = "green"        # preset: green/red/orange/yellow/blue
+    checkpoint_hsv_low: tuple = ()         # kosong = pakai preset warna
+    checkpoint_hsv_high: tuple = ()
+    checkpoint_min_area_px: int = 300
+    checkpoint_max_area_px: int = 400000
+    checkpoint_min_solidity: float = 0.3
+    checkpoint_label: str = "checkpoint"
 
     # --- kontrol ---
     max_speed_mps: float = MAX_SPEED_MPS
@@ -173,6 +186,31 @@ class Config:
         if self.motor_driver not in MOTOR_DRIVERS:
             raise ValueError(
                 f"motor_driver harus salah satu dari {sorted(MOTOR_DRIVERS)}")
+        if self.checkpoint_mode not in CHECKPOINT_MODES:
+            raise ValueError(
+                f"checkpoint_mode harus salah satu dari {sorted(CHECKPOINT_MODES)}")
+        if self.checkpoint_mode == "model" and not self.model_path:
+            raise ValueError(
+                "checkpoint_mode 'model' mensyaratkan model_path")
+        for name in ("checkpoint_hsv_low", "checkpoint_hsv_high"):
+            value = getattr(self, name)
+            if not isinstance(value, (tuple, list)) or len(value) not in (0, 3):
+                raise ValueError(
+                    f"{name} harus tuple 3 angka (H, S, V) atau kosong")
+            if not all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                       for v in value):
+                raise ValueError(f"{name} harus berisi angka")
+        if self.checkpoint_hsv_low and self.checkpoint_hsv_high:
+            if not (self.checkpoint_hsv_low[0] <= self.checkpoint_hsv_high[0]
+                    and self.checkpoint_hsv_low[1] <= self.checkpoint_hsv_high[1]
+                    and self.checkpoint_hsv_low[2] <= self.checkpoint_hsv_high[2]):
+                raise ValueError(
+                    "checkpoint_hsv_low harus <= checkpoint_hsv_high per kanal")
+        if not 0 < self.checkpoint_min_area_px <= self.checkpoint_max_area_px:
+            raise ValueError(
+                "checkpoint_min_area_px harus dalam (0, max_area_px]")
+        if not 0.0 <= self.checkpoint_min_solidity <= 1.0:
+            raise ValueError("checkpoint_min_solidity harus dalam [0, 1]")
         if not 1 <= self.stream_port <= 65535:
             raise ValueError("stream_port harus dalam [1, 65535]")
         if self.stream_fps <= 0 or not 1 <= self.stream_quality <= 100:
@@ -184,8 +222,9 @@ class Config:
         if not self.dry_run:
             if not self.serial_device:
                 raise ValueError("mode live mensyaratkan serial_device")
-            if not self.model_path:
-                raise ValueError("mode live mensyaratkan model_path")
+            # model_path tidak lagi wajib di live: checkpoint_mode
+            # mengatur. "model" butuh model_path (divalidasi di atas),
+            # "cv"/"none" jalan tanpa model.
 
     def _check_types(self) -> None:
         """Dataclass tidak memeriksa tipe; salah tipe bisa mengubah arti
@@ -193,10 +232,12 @@ class Config:
         bools = ("dry_run", "save_frames")
         strs = ("output_dir", "serial_device", "camera_pipeline",
                 "lane_polarity", "homography_path", "model_path",
-                "motor_driver", "stream_host")
+                "motor_driver", "stream_host",
+                "checkpoint_mode", "checkpoint_color", "checkpoint_label")
         ints = ("serial_baud", "image_width", "image_height", "camera_fps",
                 "lane_lost_frames", "stream_port", "stream_quality",
-                "stream_width", "stream_height")
+                "stream_width", "stream_height",
+                "checkpoint_min_area_px", "checkpoint_max_area_px")
         floats = ("confidence_threshold", "lane_min_confidence", "lane_roi_top",
                   "max_speed_mps", "steering_limit_rad", "lookahead_m",
                   "heading_gain", "lateral_gain", "max_lateral_accel",
@@ -204,7 +245,8 @@ class Config:
                   "stanley_softening_mps", "min_curve_radius_m",
                   "loop_hz", "max_inference_ms", "run_timeout_s", "stream_fps",
                   "mount_x_m", "mount_y_m", "mount_z_m", "mount_pitch_deg",
-                  "mount_yaw_deg", "mount_roll_deg")
+                  "mount_yaw_deg", "mount_roll_deg",
+                  "checkpoint_min_solidity")
         for name in bools:
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"tipe salah: {name} harus bool")

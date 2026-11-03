@@ -106,6 +106,9 @@ def test_invalid_values_rejected(patch):
     {"image_width": 1280.0},         # float untuk field integer
     {"stream_host": 8080},           # angka untuk field string
     {"mount_z_m": "0.16"},           # string untuk field float mount
+    {"checkpoint_mode": 1},          # angka untuk field string mode
+    {"checkpoint_min_area_px": 1.5},  # float untuk field integer
+    {"checkpoint_min_solidity": "0.3"},  # string untuk field float
 ])
 def test_wrong_scalar_types_rejected(patch):
     with pytest.raises(ValueError, match="[Tt]ipe"):
@@ -120,14 +123,50 @@ def test_example_config_matches_dataclass_fields():
     assert set(data) == {f.name for f in fields(Config)}
 
 
-def test_live_mode_requires_serial_and_model():
+def test_live_mode_requires_serial():
     with pytest.raises(ValueError, match="serial_device"):
         Config(dry_run=False, model_path="m.onnx").validate()
+    # checkpoint_mode "model" butuh model_path; "cv"/"none" tidak.
     with pytest.raises(ValueError, match="model_path"):
-        Config(dry_run=False, serial_device="/dev/ttyTHS1").validate()
+        Config(dry_run=False, serial_device="/dev/ttyTHS1",
+               checkpoint_mode="model").validate()
     cfg = Config(dry_run=False, serial_device="/dev/ttyTHS1",
-                 model_path="m.onnx", save_frames=True)
-    cfg.validate()  # lengkap: tidak melempar
+                 checkpoint_mode="cv", save_frames=True)
+    cfg.validate()  # cv mode: tidak butuh model_path
+
+
+def test_checkpoint_mode_validated():
+    with pytest.raises(ValueError, match="checkpoint_mode"):
+        Config(checkpoint_mode="yolo").validate()
+    for mode in ("none", "cv", "model"):
+        patch = {"checkpoint_mode": mode}
+        if mode == "model":
+            patch["model_path"] = "m.onnx"
+        Config(**{**asdict(Config()), **patch}).validate()
+
+
+def test_checkpoint_hsv_validated():
+    with pytest.raises(ValueError, match="checkpoint_hsv_low"):
+        Config(checkpoint_hsv_low=(1, 2)).validate()
+    with pytest.raises(ValueError, match="checkpoint_hsv_low"):
+        Config(checkpoint_hsv_low=("a", "b", "c")).validate()
+    with pytest.raises(ValueError, match="checkpoint_hsv_low"):
+        Config(checkpoint_hsv_low=(90, 50, 50),
+               checkpoint_hsv_high=(10, 50, 50)).validate()
+    Config(checkpoint_hsv_low=(35, 50, 50),
+           checkpoint_hsv_high=(85, 255, 255)).validate()  # low <= high
+
+
+def test_checkpoint_area_and_solidity_validated():
+    with pytest.raises(ValueError, match="checkpoint_min_area_px"):
+        Config(checkpoint_min_area_px=0).validate()
+    with pytest.raises(ValueError, match="checkpoint_min_area_px"):
+        Config(checkpoint_min_area_px=5000,
+               checkpoint_max_area_px=1000).validate()
+    with pytest.raises(ValueError, match="checkpoint_min_solidity"):
+        Config(checkpoint_min_solidity=1.5).validate()
+    Config(checkpoint_min_solidity=0.0).validate()
+    Config(checkpoint_min_solidity=1.0).validate()
 
 
 def test_mount_defaults_match_arena3d():

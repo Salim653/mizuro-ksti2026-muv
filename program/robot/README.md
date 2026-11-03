@@ -4,13 +4,17 @@ Runtime robot KSTI 2026 yang dibangun dari nol, terpisah dari scaffold
 `program/jetson/` (yang tetap ada sebagai referensi sampai migrasi
 disetujui tim). Arsitektur dan aturan lomba: `../../docs/`.
 
-## Status: Fase 1 — persepsi lajur (inti selesai, bench-only)
+## Status: Fase 4 — closed-loop runner selesai (bench-only)
 
-Fase 0 (fondasi) selesai. Fase 1: `LaneTracker` CV klasik sudah jalan
-end-to-end dan dievaluasi terhadap ground truth sintetis eksak — median
-error lateral **0.73 mm**, heading **0.11°** pada 100 frame acak (target
-Fase 1: < 3 cm / < 5°). Loop persepsi (kamera → lajur → kontrol → MCU)
-masih menunggu Fase 2–3; mode live tetap ditolak sampai controller ada.
+Fase 0 (fondasi), Fase 1 (persepsi lajur), Fase 2 (detektor semantik),
+Fase 3 (controller Stanley), dan Fase 4 (closed-loop runner) selesai.
+Tracker dievaluasi terhadap ground truth sintetis eksak — median error
+lateral **0.73 mm**, heading **0.11°** pada 100 frame acak (target
+Fase 1: < 3 cm / < 5°). Stanley replay sim converge ke **3.1 mm /
+1.47°** steady-state dari offset 0.2 m + heading 20°.
+
+Motor **belum pernah menyala** di build ini. Mode live butuh
+`dry_run=false` + roda terangkat + E-stop fisik.
 
 ## Menjalankan
 
@@ -30,6 +34,9 @@ python3 tools/eval_perception.py --frames 100
 # eval persepsi — dataset asli arena-3d (zip export):
 python3 tools/eval_perception.py --dataset /path/ke/laps.zip
 
+# replay controller Stanley di sim (tanpa hardware, tanpa motor):
+python3 tools/replay_control.py --offset 0.2 --heading 20
+
 # boot kering: BOOT -> READY -> STOPPED, menulis log, roda tidak bergerak
 cp robot.example.json robot.json   # lalu sesuaikan
 python3 main.py --config robot.json
@@ -38,6 +45,29 @@ python3 main.py --config robot.json
 Di Jetson, pakai `/usr/bin/python3` (OpenCV JetPack + GStreamer). `.venv`
 repo memakai opencv-python pip dan hanya untuk skrip bench `test-yolo*/`
 serta test suite repo ini.
+
+## Flag main.py
+
+| Flag | Kegunaan | Hardware | Motor |
+|---|---|---|---|
+| `--self-check` | Verifikasi fondasi: config, state machine, protokol, MCU stub | Tidak ada | Tidak |
+| `--stream-only` | Bench persepsi: kamera CSI + MJPEG (`:8080/stream`) + tracker lajur | Kamera | Tidak |
+| `--closed-loop` | Loop kontrol: kamera → tracker → Stanley → MCU. `dry_run` default true = log saja, serial tidak disentuh | Kamera (+ MCU kalau live) | Hanya kalau `dry_run=false` |
+| `--config PATH` | Tunjuk file config (default `robot.json`) | — | — |
+
+Tanpa flag → `boot_dry` (heartbeat nol, langsung exit; sisa Fase 0).
+
+```sh
+# Bench kamera + tracker (Jetson):
+/usr/bin/python3 -u main.py --stream-only
+
+# Closed-loop dry-run — loop penuh, serial TIDAK disentuh:
+/usr/bin/python3 -u main.py --closed-loop
+
+# LIVE (MOTOR NYALA) — syarat: dry_run=false di config + roda
+# terangkat + E-stop fisik + arus terbatas:
+/usr/bin/python3 -u main.py --closed-loop --config robot.json
+```
 
 ## Isi paket
 
@@ -91,6 +121,40 @@ serta test suite repo ini.
   pola terbalik gagal total (tes sintetis membuktikan). Cetakan
   standar hitam-di-putih aman.
 
+## Deteksi checkpoint (`checkpoint_mode`)
+
+Detektor checkpoint **tidak mengontrol robot** — hasilnya masuk log
+(`Observation.detections` / telemetry), lane keeping tetap classical
+CV. Backend dipilih lewat config:
+
+| Mode | Backend | Butuh | Kecepatan |
+|---|---|---|---|
+| `none` (default) | mati | — | — |
+| `cv` | `CheckpointDetectorCV` — threshold HSV + morphology + filter kontur | nol training | ~5 ms |
+| `model` | `SemanticDetector` — YOLO ONNX (cv2.dnn) | model terlatih kelas arena | ~270 ms (CPU) |
+
+```json
+{
+  "checkpoint_mode": "cv",
+  "checkpoint_color": "green",
+  "checkpoint_hsv_low": [],
+  "checkpoint_hsv_high": [],
+  "checkpoint_min_area_px": 300,
+  "checkpoint_max_area_px": 400000,
+  "checkpoint_min_solidity": 0.3,
+  "checkpoint_label": "checkpoint"
+}
+```
+
+- `checkpoint_hsv_low/high` kosong = pakai preset warna
+  (`checkpoint_color`: green/red/orange/yellow/blue). Diisi tuple 3
+  angka `(H, S, V)` untuk rentang eksplisit.
+- Mode `model` mensyaratkan `model_path` (divalidasi saat load);
+  mode `cv`/`none` jalan tanpa model.
+- Detektor CV melaporkan "ada blob warna target di sini" — tidak
+  bisa bedakan checkpoint dari benda warna sama. Kalau arena tidak
+  konsisten warnanya, pakai mode `model` setelah ada dataset asli.
+
 ## Peta fase
 
 1. **Fase 0 — fondasi** ✅: config, state, protokol, log, test.
@@ -106,8 +170,11 @@ serta test suite repo ini.
 5. **Fase 4 — closed-loop + MCU** (runner selesai): `--closed-loop`
    persepsi -> Stanley -> MCU, dry_run default. Tinggal: MCU status
    protocol (feedback MCU -> Jetson), bench roda terangkat.
-6. **Fase 5 — checkpoint**: butuh spec Technical Meeting + dataset.
-   balik, timer 300 s, persistensi checkpoint.
+6. **Fase 5 — checkpoint** (groundwork selesai): `checkpoint_mode`
+   di config memilih backend deteksi checkpoint — `none` (mati,
+   default) | `cv` (classical CV warna/bentuk, nol training, ~5 ms)
+   | `model` (YOLO ONNX, butuh model terlatih). Tinggal: spec
+   Technical Meeting + foto arena untuk tuning threshold / training.
 
 ## Keselamatan
 
