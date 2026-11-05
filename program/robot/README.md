@@ -37,6 +37,9 @@ python3 tools/eval_perception.py --dataset /path/ke/laps.zip
 # replay controller Stanley di sim (tanpa hardware, tanpa motor):
 python3 tools/replay_control.py --offset 0.2 --heading 20
 
+# rekam dataset: frame mentah + index.csv timestamped (Jetson):
+/usr/bin/python3 tools/record_dataset.py --frames 200
+
 # boot kering: BOOT -> READY -> STOPPED, menulis log, roda tidak bergerak
 cp robot.example.json robot.json   # lalu sesuaikan
 python3 main.py --config robot.json
@@ -154,6 +157,38 @@ CV. Backend dipilih lewat config:
 - Detektor CV melaporkan "ada blob warna target di sini" — tidak
   bisa bedakan checkpoint dari benda warna sama. Kalau arena tidak
   konsisten warnanya, pakai mode `model` setelah ada dataset asli.
+
+### Ngumpulkan dataset (mode `model`)
+
+```sh
+# 1. Rekam frame mentah dari kamera robot (headless, preview browser)
+/usr/bin/python3 tools/record_dataset.py --frames 300
+
+# 2. Output: runs/dataset-<timestamp>/
+#      frames/frame-000001.png ... + index.csv (timestamp per frame)
+
+# 3. Label (di laptop): LabelImg / Roboflow / labelStudio
+
+# 4. Train + export:
+.venv/bin/yolo segment train data=arena.yaml model=yolo11n-seg.pt epochs=100
+.venv/bin/python tools/export_model.py runs/segment/train/weights/best.pt
+
+# 5. Set model_path + checkpoint_mode: "model" di robot.json
+```
+
+Kontrol rekam (jalan lewat SSH, tanpa display):
+
+| Tombol | Fungsi |
+|---|---|
+| `SPACE` | mulai / stop rekam — bisa beberapa take per sesi, penomoran frame lanjut |
+| `Q` | keluar |
+| `Ctrl+C` | stop darurat (frame yang sudah tersimpan tetap di-index) |
+
+Tanpa terminal (piped/nohup), pakai `--frames N` / `--duration S`.
+Default format **PNG** (lossless — JPEG chroma subsampling menggeser
+hue, penting buat detektor berbasis warna); `--format jpg` kalau disk
+sempit (~3x lebih kecil). Frame di-undistort kalau `homography_path`
+di-set — dataset SAMA dengan input detector di runtime.
 
 ## Peta fase
 

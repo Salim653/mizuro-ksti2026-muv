@@ -5,6 +5,71 @@ Riwayat paket runtime robot (`program/robot/`). Scaffold lama
 build baru dimulai. Format: satu entri per commit besar, plus catatan
 verifikasi dan yang BELUM diuji.
 
+## 2026-11-03 — tools/record_dataset.py: kontrol manual SPACE/Q + default PNG
+
+Branch `feature/camera-mount-offset`.
+
+- Kontrol manual lewat terminal raw mode (cbreak): SPACE = mulai/stop
+  rekam, Q = keluar. Jalan lewat SSH TANPA display — `cv2.waitKey`
+  butuh jendela GUI yang tidak ada di Jetson headless. ISIG tetap
+  aktif jadi Ctrl+C masih raise KeyboardInterrupt.
+- Mode PREVIEW: dengan keyboard aktif, alat mulai BELUM rekam;
+  browser preview jalan, SPACE baru mulai. Beberapa take per sesi
+  dibolehkan — penomoran frame dan index.csv menyatu across takes.
+- Tanpa terminal (piped/nohup/systemd) keyboard otomatis mati;
+  `--frames`/`--duration` jadi satu-satunya stop condition (dan
+  `--no-keyboard` mematikan eksplisit). Ctrl+C di titik mana pun
+  (termasuk `cam.read()`) tetap mengembalikan rows yang sudah
+  tersimpan.
+- Default format PNG (lossless). Alasan: JPEG chroma subsampling
+  4:2:0 menggeser hue — kalau nanti pakai `checkpoint_mode: "cv"`
+  (deteksi berbasis warna), dataset PNG menjaga warna persis seperti
+  yang robot lihat. `--format jpg` tetap ada (~3x lebih kecil/cepat).
+- `Keyboard` class: read_key disuntikkan bisa (tes); restore terminal
+  dipanggil di finally — terminal rusak kalau dilewat.
+- `tests/test_record_dataset.py`: 27 tes — Keyboard (space/quit/
+  tombol lain diabaikan/close mati total/reader error selamat),
+  parse_args (keyboard-only valid di TTY, ditolak tanpa TTY),
+  mode manual (preview sampai SPACE, stop-restart takes, penomoran
+  menyatu, quit sebelum rekam = 0 frame, --frames tetap berlaku,
+  preview frame tetap dipublish).
+- Bug yang ketangkap tes: FakeKeyboard awal mengembalikan byte mentar
+  (`b" "`) bukan "space" — loop masuk preview selamanya. Mapping
+  tombol sekarang diverifikasi tes.
+- Belum diuji: SPACE/Q dengan terminal asli di Jetson (butuh bench
+  interaktif); throughput tulis PNG di SD card Jetson.
+
+## 2026-11-03 — tools/record_dataset.py: perekam dataset headless
+
+Branch `feature/camera-mount-offset`.
+
+Adaptasi dari script rekam teman (`jetson_record_720p60.py`) ke
+konvensi repo: pakai `Camera.from_config` (bukan pipeline GStreamer
+tulis ulang), preview MJPEG headless (bukan `cv2.imshow` — Jetson
+di robot tidak punya display), dan simpan frame MENTAH + timestamp
+(bukan mp4 lossy tanpa waktu).
+
+- `tools/record_dataset.py` (baru): rekam frame + `index.csv`
+  (filename, t_monotonic_s, t_wall_s, width, height) ke
+  `runs/dataset-<timestamp>/frames/`.
+- Kontrol headless: `--frames N` / `--duration S` / Ctrl+C (tidak
+  ada keyboard listener; SPACE-to-record butuh display).
+- `--every N` decimasi (kamera 60fps -> data 30fps), `--warmup S`
+  buang frame awal (auto-exposure settle), `--format jpg|png`,
+  `--quality`, `--no-stream` (matikan server preview).
+- Frame di-undistort kalau `homography_path` di-set — dataset SAMA
+  dengan input detector di runtime (tidak ada domain gap).
+- Ctrl+C di titik mana pun (termasuk `cam.read()`) tetap
+  mengembalikan rows yang sudah tersimpan — index.csv konsisten
+  dengan file di disk.
+- `tests/test_record_dataset.py` (baru): 15 tes — parse_args
+  (wajib punya stop condition, validasi rentang), writer jpg/png
+  (png lossless, jpg near-exact untuk warna solid), loop rekam
+  (jumlah frame, durasi, decimasi, warmup, kamera gagal, Ctrl+C
+  keeps rows, publish ke hub, timestamp naik, isi file = isi frame).
+- Belum diuji: rekam dengan kamera CSI asli di Jetson (butuh bench);
+  throughput tulis PNG di SD card Jetson belum diukur.
+
 ## 2026-11-03 — Fase 5 (groundwork): checkpoint_mode + detektor CV klasik
 
 Branch `feature/camera-mount-offset`.
