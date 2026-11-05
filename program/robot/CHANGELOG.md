@@ -5,6 +5,23 @@ Riwayat paket runtime robot (`program/robot/`). Scaffold lama
 build baru dimulai. Format: satu entri per commit besar, plus catatan
 verifikasi dan yang BELUM diuji.
 
+## 2026-11-05 — models/: direktori file model (gitignored)
+
+Branch `feature/camera-mount-offset`.
+
+- `program/robot/models/` (baru): tempatkan semua file model —
+  `yolo11n.pt` dan `yolo11n-seg.pt` dipindahkan dari root repo ke
+  sini (copy di `test-yolo*/` tidak disentuh; script bench mengharapkan
+  file di folder masing-masing). Root `.gitignore` sudah memuat
+  `*.pt`/`*.onnx` jadi isi direktori tidak pernah ke-commit; yang
+  masuk git hanya `models/README.md` (konvensi penamaan + alur
+  train -> export -> `model_path`).
+- `yolo11n-seg.onnx` TETAP di root: direferensiasi by path oleh
+  `tests/test_detector.py` (`parents[3] / "yolo11n-seg.onnx"`).
+  Pindah butuh update tes + `_ONNX` — tidak dilakukan di commit ini.
+- README paket: contoh export sekarang menulis ke
+  `models/checkpoint.onnx`.
+
 ## 2026-11-03 — tools/record_dataset.py: kontrol manual SPACE/Q + default PNG
 
 Branch `feature/camera-mount-offset`.

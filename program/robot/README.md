@@ -169,9 +169,10 @@ CV. Backend dipilih lewat config:
 
 # 3. Label (di laptop): LabelImg / Roboflow / labelStudio
 
-# 4. Train + export:
-.venv/bin/yolo segment train data=arena.yaml model=yolo11n-seg.pt epochs=100
-.venv/bin/python tools/export_model.py runs/segment/train/weights/best.pt
+# 4. Train + export (model disimpan di models/, lihat models/README.md):
+.venv/bin/yolo segment train data=arena.yaml model=models/yolo11n-seg.pt epochs=100
+.venv/bin/python tools/export_model.py runs/segment/train/weights/best.pt \
+    --output models/checkpoint.onnx
 
 # 5. Set model_path + checkpoint_mode: "model" di robot.json
 ```
