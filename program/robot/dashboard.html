@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#101418">
+<title>MIZURO — Dashboard Run</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #101418;
+    --surface: #171d24;
+    --surface-2: #1e262f;
+    --ink: #e8edf2;
+    --muted: #9aa7b4;
+    --line: #2c3742;
+    --accent: #4cc2ff;
+    --warn: #ffb454;
+    --good: #3ecf8e;
+    --bad: #ff6b5e;
+    --radius: 8px;
+    font-family: "Segoe UI", system-ui, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); }
+  main { width: min(1180px, 100%); margin: 0 auto; padding: clamp(14px, 3vw, 32px); }
+  header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; border-bottom: 2px solid var(--line); padding-bottom: 16px; }
+  h1 { margin: 0; font-size: clamp(1.5rem, 4vw, 2.2rem); line-height: 1.05; letter-spacing: -0.02em; }
+  .eyebrow { margin: 0 0 6px; color: var(--muted); font-size: .85rem; letter-spacing: .12em; }
+  .connection { display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: .92rem; }
+  .connection::before { content: ""; width: 11px; height: 11px; border-radius: 50%; background: var(--muted); }
+  .connection[data-kind="live"] { color: var(--good); }
+  .connection[data-kind="live"]::before { background: var(--good); box-shadow: 0 0 8px var(--good); }
+  .connection[data-kind="stale"] { color: var(--warn); }
+  .connection[data-kind="stale"]::before { background: var(--warn); }
+  .connection[data-kind="offline"], .connection[data-kind="error"] { color: var(--bad); }
+  .connection[data-kind="offline"]::before, .connection[data-kind="error"]::before { background: var(--bad); }
+  .connection[data-kind="demo"] { color: var(--accent); }
+  .connection[data-kind="demo"]::before { background: var(--accent); }
+
+  .notice { margin: 16px 0; padding: 12px 16px; border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: var(--radius); background: var(--surface); line-height: 1.5; font-size: .95rem; }
+  .notice strong { color: var(--warn); }
+  .message { margin: 18px 0; padding: 22px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); line-height: 1.55; }
+  .message h2 { margin: 0 0 8px; font-size: 1.2rem; }
+  .message p { margin: 0; color: var(--muted); }
+
+  .controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin: 18px 0; }
+  .controls label { color: var(--muted); font-size: .9rem; }
+  select, input[type="url"], button { min-height: 40px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); color: var(--ink); font: inherit; font-size: .92rem; }
+  select { min-width: 220px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  .demo-toggle { display: flex; align-items: center; gap: 8px; min-height: 40px; cursor: pointer; }
+  .demo-toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
+  .demo-badge { padding: 8px 12px; border: 1px solid var(--accent); border-radius: var(--radius); color: var(--accent); font-size: .85rem; font-weight: 600; }
+
+  .workspace { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, .8fr); gap: 20px; align-items: start; }
+  .camera-column, .checks-column { min-width: 0; }
+  .checks-column { display: grid; gap: 18px; }
+
+  .video-panel { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+  .video-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 14px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .video-heading h3, .video-heading p { margin: 0; }
+  .video-heading h3 { font-size: 1rem; }
+  .video-heading p { color: var(--muted); font-size: .85rem; }
+  .video-frame { min-height: 170px; aspect-ratio: 16 / 9; display: grid; place-items: center; background: #0b0e12; }
+  .video-frame img { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .video-empty { padding: 18px; text-align: center; color: var(--muted); line-height: 1.5; font-size: .9rem; }
+  .video-empty p { margin: 0; }
+  .video-empty code { color: var(--accent); }
+  .feed-setting { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line); }
+  .feed-setting input { flex: 1 1 240px; min-width: 0; }
+
+  .instrument { display: grid; gap: 16px; margin-top: 16px; }
+  .primary-readout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, .65fr); gap: 18px; align-items: center; padding: clamp(16px, 3vw, 26px); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+  .primary-readout .label { margin: 0; color: var(--muted); font-size: .9rem; }
+  .speed { display: flex; align-items: baseline; gap: 10px; margin: 12px 0 6px; }
+  .speed output { font-variant-numeric: tabular-nums; font-size: clamp(3.4rem, 10vw, 6rem); font-weight: 650; line-height: .9; letter-spacing: -.04em; }
+  .speed span { color: var(--muted); }
+  .speed-caption { margin: 0; color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; }
+  .steering-wrap { display: flex; flex-direction: column; gap: 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+  .steering-wrap p { margin: 0; }
+  .steering-wrap strong { font-variant-numeric: tabular-nums; font-size: clamp(1.3rem, 3vw, 1.8rem); }
+  .steering-meter { width: 100%; height: 10px; appearance: none; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); }
+  .steering-meter::-webkit-progress-bar { background: var(--surface-2); border-radius: 999px; }
+  .steering-meter::-webkit-progress-value { background: var(--accent); border-radius: 999px; }
+  .steering-meter::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
+
+  .readouts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+  .reading { min-width: 0; padding: 14px 16px; border-right: 1px solid var(--line); }
+  .reading:last-child { border-right: 0; }
+  .reading p { margin: 0; }
+  .reading .label { color: var(--muted); font-size: .82rem; line-height: 1.3; }
+  .reading .value { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 6px; margin-top: 8px; }
+  .reading output { font-variant-numeric: tabular-nums; font-size: clamp(1.2rem, 2.6vw, 1.6rem); font-weight: 650; overflow-wrap: anywhere; }
+  .reading .unit { font-size: .8rem; font-weight: 400; color: var(--muted); }
+
+  .chart-panel { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+  .chart-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 14px; padding: 12px 14px 0; }
+  .chart-heading h3, .chart-heading p { margin: 0; }
+  .chart-heading h3 { font-size: 1rem; }
+  .chart-heading p { color: var(--muted); font-size: .82rem; }
+  .chart-box { padding: 8px 14px 4px; }
+  #chart { display: block; width: 100%; height: 220px; }
+  .legend { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 18px; margin: 0; padding: 0 14px 14px; color: var(--muted); font-size: .82rem; }
+  .key { display: inline-block; width: 18px; height: 4px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  .key.speed { background: var(--accent); }
+  .key.error { background: var(--warn); }
+
+  .operator-state { padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+  .operator-state h2 { margin: 0 0 6px; font-size: clamp(1.2rem, 3vw, 1.7rem); }
+  .operator-state p { margin: 0; color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; }
+  .checks-section { padding-top: 14px; border-top: 2px solid var(--line); }
+  .checks-section h3 { margin: 0 0 10px; font-size: 1rem; }
+  .events { margin: 0; padding: 0; list-style: none; }
+  .events li { display: flex; justify-content: space-between; gap: 12px; padding: 9px 2px; border-bottom: 1px solid var(--line); font-size: .9rem; overflow-wrap: anywhere; }
+  .events li:last-child { border-bottom: 0; }
+  .events li span:last-child { color: var(--muted); font-size: .8rem; }
+  .run-info p { margin: 0 0 8px; line-height: 1.5; overflow-wrap: anywhere; }
+  .run-name { font-family: Consolas, "Courier New", monospace; font-size: .9rem; }
+  .muted { color: var(--muted); font-size: .85rem; }
+
+  footer { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: .85rem; line-height: 1.55; }
+  [hidden] { display: none !important; }
+  @media (max-width: 900px) {
+    .workspace { grid-template-columns: minmax(0, 1fr); }
+    .readouts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .reading:nth-child(2) { border-right: 0; }
+  }
+  @media (max-width: 540px) {
+    .primary-readout { grid-template-columns: minmax(0, 1fr); }
+    .readouts { grid-template-columns: minmax(0, 1fr); }
+    .reading { border-right: 0; border-bottom: 1px solid var(--line); }
+    .reading:last-child { border-bottom: 0; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <p class="eyebrow">KSTI 2026 · MIZURO</p>
+      <h1>Dashboard Run</h1>
+    </div>
+    <div id="connection" class="connection" data-kind="loading" role="status" aria-live="polite">Menghubungkan ke log…</div>
+  </header>
+
+  <p class="notice"><strong>Bench / pit saja.</strong> Matikan dashboard ini sebelum percobaan lomba — aturan melarang komunikasi dengan robot selama run. Halaman ini read-only dan tidak menggerakkan apa pun.</p>
+
+  <section id="loading" class="message" aria-live="polite" hidden><h2>Membaca log run…</h2><p>Menunggu file log dari Jetson.</p></section>
+  <section id="empty" class="message" hidden><h2>Tidak ada log run</h2><p id="emptyText">Jalankan runtime robot atau arahkan dashboard ke direktori output yang benar (<code>--runs</code>).</p></section>
+  <section id="error" class="message" role="alert" hidden><h2>Dashboard tidak bisa membaca log</h2><p id="errorText">Periksa proses Jetson dan direktori log, lalu segarkan.</p></section>
+
+  <div id="instrumentView" hidden>
+    <section class="controls" aria-label="Kontrol dashboard">
+      <label for="runSelect">Run</label>
+      <select id="runSelect" aria-label="Pilih run"></select>
+      <label class="demo-toggle"><input type="checkbox" id="demoMode"> Mode simulasi</label>
+      <span id="demoBadge" class="demo-badge" aria-live="polite" hidden>SIMULASI — BUKAN RUN ASLI</span>
+      <button id="refresh" type="button">Segarkan</button>
+    </section>
+
+    <div class="workspace">
+      <section class="camera-column" aria-label="Kamera dan telemetri">
+        <section class="video-panel" aria-label="Feed kamera">
+          <div class="video-heading"><h3>Kamera</h3><p id="videoStatus" role="status" aria-live="polite">Belum terhubung</p></div>
+          <div id="videoFrame" class="video-frame"><div class="video-empty"><p>Masukkan URL MJPEG (mis. <code>http://192.168.55.1:8080/stream</code>) untuk preview kamera dari <code>main.py --stream-only</code>.</p></div></div>
+          <div class="feed-setting">
+            <input id="feedUrl" type="url" inputmode="url" placeholder="http://192.168.55.1:8080/stream" aria-label="URL stream MJPEG">
+            <button id="connectFeed" type="button">Hubungkan</button>
+            <button id="clearFeed" type="button">Putuskan</button>
+          </div>
+        </section>
+
+        <div class="instrument">
+          <section class="primary-readout" aria-label="Telemetri gerak">
+            <div>
+              <p class="label">Kecepatan command</p>
+              <div class="speed"><output id="speed">N/A</output><span>m/s</span></div>
+              <p id="commandReason" class="speed-caption">Alasan command tidak tersedia</p>
+            </div>
+            <div class="steering-wrap">
+              <p><span class="label">Command kemudi</span><br><strong><output id="steering">N/A</output> <span class="unit">rad</span></strong></p>
+              <progress id="steeringMeter" class="steering-meter" max="0.55" value="0" aria-label="Command kemudi terhadap batas ±0.55 rad"></progress>
+            </div>
+          </section>
+
+          <section class="readouts" aria-label="Pengukuran persepsi">
+            <div class="reading"><p class="label">Confidence lajur</p><div class="value"><output id="confidence">N/A</output></div></div>
+            <div class="reading"><p class="label">Error lateral</p><div class="value"><output id="laneError">N/A</output><span class="unit">mm</span></div></div>
+            <div class="reading"><p class="label">Error heading</p><div class="value"><output id="headingError">N/A</output><span class="unit">deg</span></div></div>
+            <div class="reading"><p class="label">Radius belokan</p><div class="value"><output id="curvature">N/A</output><span class="unit">m</span></div></div>
+          </section>
+
+          <section class="chart-panel" aria-label="Grafik deret waktu">
+            <div class="chart-heading"><h3>Grafik waktu</h3><p id="chartStatus" role="status" aria-live="polite"></p></div>
+            <div class="chart-box"><canvas id="chart"></canvas></div>
+            <p class="legend"><span><span class="key speed"></span>Kecepatan (m/s)</span><span><span class="key error"></span>Error lateral (mm)</span></p>
+          </section>
+        </div>
+      </section>
+
+      <aside class="checks-column" aria-label="Status dan event">
+        <div class="operator-state" role="status" aria-live="polite">
+          <h2 id="stateTitle">N/A</h2>
+          <p id="stateReason" class="state-reason"></p>
+        </div>
+        <section class="checks-section">
+          <h3>Event runtime</h3>
+          <ul id="events" class="events"></ul>
+        </section>
+        <section class="checks-section run-info">
+          <h3>Sumber log</h3>
+          <p id="runName" class="run-name">N/A</p>
+          <p id="lastUpdate">Menunggu baris telemetry.</p>
+          <p id="rowCount" class="muted"></p>
+        </section>
+      </aside>
+    </div>
+  </div>
+
+  <footer>Tampilan read-only log runtime (<code>runs/run-*/telemetry.csv</code> + <code>events.jsonl</code>) dengan preview kamera MJPEG opsional. Nilai yang hilang berarti runtime belum menghasilkan pengukuran itu. Feedback MCU, input start fisik, dan status E-stop TIDAK tersedia di dashboard ini.</footer>
+</main>
+
+<script>
+  const byId = id => document.getElementById(id);
+  const views = ["loading", "empty", "error", "instrumentView"];
+  const STATUS_MS = 1500;
+  const RUNS_MS = 5000;
+  const HISTORY_EVERY = 4;   // grafik = setiap 4 tick status (~6 s)
+
+  let demoMode = false;
+  let selectedRun = "";      // "" = run terbaru
+  let runRows = new Map();   // nama run -> jumlah baris
+  let statusBusy = false;
+  let runsBusy = false;
+  let historyBusy = false;
+  let tick = 0;
+  let connectionState = "loading";
+  let hasLoaded = false;
+
+  function show(view) {
+    for (const id of views) byId(id).hidden = id !== view;
+  }
+
+  function fixed(value, digits = 3) {
+    return Number.isFinite(value) ? value.toFixed(digits) : "N/A";
+  }
+
+  async function api(path) {
+    const response = await fetch(path, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+  }
+
+  function statusPath() {
+    return (demoMode ? "/api/demo" : "/api/status") +
+           (selectedRun && !demoMode ? `?run=${encodeURIComponent(selectedRun)}` : "");
+  }
+
+  function historyPath() {
+    return (demoMode ? "/api/demo" : `/api/history?points=240${selectedRun ? `&run=${encodeURIComponent(selectedRun)}` : ""}`);
+  }
+
+  // --- feed kamera -----------------------------------------------------------
+  const feedUrl = byId("feedUrl");
+  // DEFAULT_FEED diganti server (dashboard.py) kalau main.py dijalankan
+  // dengan --dashboard: URL MJPEG dari mode itu langsung terisi.
+  const DEFAULT_FEED = "__FEED_URL__";
+  let feedImage = null;
+  try {
+    feedUrl.value = localStorage.getItem("mizuro-dashboard-feed-url") || DEFAULT_FEED;
+  } catch (error) { /* storage bisa dimatikan browser */ }
+  if (feedUrl.value) connectFeed();
+
+  function connectFeed() {
+    const raw = feedUrl.value.trim();
+    if (!raw) {
+      clearFeed("Masukkan URL stream kamera dulu.");
+      return;
+    }
+    let url;
+    try {
+      url = new URL(raw);
+      if (!(url.protocol === "http:" || url.protocol === "https:")) {
+        throw new Error("URL harus HTTP atau HTTPS.");
+      }
+    } catch (error) {
+      clearFeed(error.message || "URL tidak valid.");
+      return;
+    }
+    try { localStorage.setItem("mizuro-dashboard-feed-url", url.href); }
+    catch (error) { /* storage bisa dimatikan */ }
+    const image = document.createElement("img");
+    image.alt = "Stream kamera langsung";
+    image.addEventListener("load", () => {
+      byId("videoStatus").textContent = "Terhubung ke stream kamera";
+    });
+    image.addEventListener("error", () => {
+      if (feedImage !== image) return;
+      feedImage = null;
+      byId("videoStatus").textContent = "Feed tidak tersedia. Periksa URL, jaringan, dan akses cross-origin browser.";
+      byId("videoFrame").replaceChildren(emptyFeed("Tidak bisa memuat feed kamera ini."));
+    });
+    feedImage = image;
+    byId("videoStatus").textContent = "Menghubungkan ke stream kamera…";
+    byId("videoFrame").replaceChildren(image);
+    image.src = url.href;
+  }
+
+  function emptyFeed(message) {
+    const box = document.createElement("div");
+    box.className = "video-empty";
+    const text = document.createElement("p");
+    text.textContent = message;
+    box.append(text);
+    return box;
+  }
+
+  function clearFeed(message = "Feed diputuskan") {
+    feedImage = null;
+    byId("videoStatus").textContent = message;
+    byId("videoFrame").replaceChildren(emptyFeed(message));
+  }
+
+  // --- render status ---------------------------------------------------------
+  function render(data) {
+    byId("demoBadge").hidden = !data.demo;
+    if (!data.available) {
+      show("empty");
+      byId("connection").dataset.kind = "offline";
+      setConnection("offline", data.error ? "Log tidak bisa dibaca" : "Belum ada baris telemetry");
+      if (data.error) {
+        byId("emptyText").textContent = `${data.error}. Periksa direktori log (--runs).`;
+      } else {
+        byId("emptyText").textContent = "Jalankan runtime robot atau arahkan dashboard ke direktori output yang benar (--runs).";
+      }
+      return;
+    }
+    byId("emptyText").textContent = "Jalankan runtime robot atau arahkan dashboard ke direktori output yang benar (--runs).";
+    show("instrumentView");
+
+    const kind = data.demo ? "demo" : data.fresh ? "live" : "stale";
+    byId("connection").dataset.kind = kind;
+    setConnection(kind, data.demo ? "Mode simulasi"
+      : data.fresh ? "Log aktif"
+      : `Log basi ${fixed(data.age_s, 0)} s`);
+
+    byId("stateTitle").textContent = data.state || "State tidak diketahui";
+    byId("stateReason").textContent = data.reason || "";
+    byId("speed").textContent = fixed(data.speed_mps, 2);
+    byId("steering").textContent = fixed(data.steering_rad, 3);
+    byId("steeringMeter").value = Number.isFinite(data.steering_rad)
+      ? Math.min(0.55, Math.abs(data.steering_rad)) : 0;
+    byId("commandReason").textContent = data.command_reason || "Alasan command tidak tersedia";
+    byId("confidence").textContent = Number.isFinite(data.confidence)
+      ? `${Math.round(data.confidence * 100)}%` : "N/A";
+    byId("laneError").textContent = Number.isFinite(data.lane_error_m)
+      ? fixed(data.lane_error_m * 1000, 1) : "N/A";
+    byId("headingError").textContent = Number.isFinite(data.heading_error_rad)
+      ? fixed(data.heading_error_rad * 180 / Math.PI, 1) : "N/A";
+    const curvature = data.curvature_inv_m;
+    byId("curvature").textContent = Number.isFinite(curvature) && Math.abs(curvature) > 0.02
+      ? fixed(1 / curvature, 1) : "lurus";
+
+    byId("runName").textContent = data.run || "Run tidak diketahui";
+    byId("lastUpdate").textContent = data.demo
+      ? "Nilai sintetis untuk preview UI — tidak ada log robot yang disentuh."
+      : data.fresh ? "Log telemetry sedang diperbarui."
+      : `Penulisan terakhir ${fixed(data.age_s, 1)} detik lalu. Runtime mungkin sudah berhenti.`;
+    const rows = runRows.get(data.run);
+    byId("rowCount").textContent = data.demo ? ""
+      : (rows !== undefined ? `${rows} baris telemetry` : "");
+
+    const list = byId("events");
+    list.replaceChildren();
+    if (!data.events || data.events.length === 0) {
+      const item = document.createElement("li");
+      item.append(document.createTextNode("Belum ada event runtime."));
+      list.append(item);
+    } else {
+      for (const event of [...data.events].reverse()) {
+        const item = document.createElement("li");
+        const name = document.createElement("span");
+        name.textContent = event.event;
+        const kindText = document.createElement("span");
+        kindText.textContent = data.demo ? "simulasi" : "event";
+        item.append(name, kindText);
+        list.append(item);
+      }
+    }
+  }
+
+  function setConnection(kind, text) {
+    byId("connection").textContent = text;
+    connectionState = kind;
+  }
+
+  // --- daftar run -------------------------------------------------------------
+  function renderRuns(runs) {
+    runRows = new Map(runs.map(item => [item.run, item.rows]));
+    const select = byId("runSelect");
+    const previous = selectedRun;
+    select.replaceChildren();
+    const latest = document.createElement("option");
+    latest.value = "";
+    latest.textContent = "Terbaru";
+    select.append(latest);
+    for (const item of runs) {
+      const option = document.createElement("option");
+      option.value = item.run;
+      option.textContent = `${item.run} · ${item.rows} baris`;
+      select.append(option);
+    }
+    // pertahankan pilihan kalau run-nya masih ada
+    if (previous && runRows.has(previous)) {
+      selectedRun = previous;
+    } else if (previous) {
+      selectedRun = "";   // run hilang (dihapus/dipindah) -> kembali ke terbaru
+    }
+    select.value = selectedRun;
+  }
+
+  // --- grafik ------------------------------------------------------------------
+  function drawChart(history) {
+    const canvas = byId("chart");
+    const status = byId("chartStatus");
+    const ctx = canvas.getContext("2d");
+    const dpr = window.devicePixelRatio || 1;
+    const width = canvas.clientWidth || 600;
+    const height = canvas.clientHeight || 220;
+    if (canvas.width !== Math.round(width * dpr) ||
+        canvas.height !== Math.round(height * dpr)) {
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    if (!history || !history.available || !history.t || history.t.length < 2) {
+      status.textContent = history && history.available
+        ? "data terlalu sedikit untuk grafik" : "belum ada data";
+      ctx.fillStyle = "#9aa7b4";
+      ctx.font = "13px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("Belum ada data grafik.", width / 2, height / 2);
+      return;
+    }
+
+    const padL = 46, padR = 46, padT = 12, padB = 24;
+    const plotW = width - padL - padR;
+    const plotH = height - padT - padB;
+    const t = history.t;
+    const speed = history.speed_mps;
+    const error = history.lane_error_mm;
+    const tMax = Math.max(t[t.length - 1], 1);
+    const speedMax = Math.max(0.5, ...speed.filter(Number.isFinite)) * 1.15 || 0.5;
+    const errMax = Math.max(20, ...error.filter(Number.isFinite).map(Math.abs)) * 1.15;
+
+    const x = i => padL + (t[i] / tMax) * plotW;
+    const ySpeed = v => padT + plotH - (v / speedMax) * plotH;
+    const yError = v => padT + plotH / 2 - (v / errMax) * (plotH / 2);
+
+    // grid + label sumbu
+    ctx.font = "11px system-ui, sans-serif";
+    ctx.textBaseline = "middle";
+    for (let g = 0; g <= 4; g++) {
+      const y = padT + (plotH * g) / 4;
+      ctx.strokeStyle = "#2c3742";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padL, y);
+      ctx.lineTo(padL + plotW, y);
+      ctx.stroke();
+      ctx.fillStyle = "#4cc2ff";
+      ctx.textAlign = "right";
+      ctx.fillText((speedMax * (1 - g / 4)).toFixed(2), padL - 8, y);
+      ctx.fillStyle = "#ffb454";
+      ctx.textAlign = "left";
+      ctx.fillText((errMax * (1 - g / 4)).toFixed(0), padL + plotW + 8, y);
+    }
+    // garis nol error lateral
+    ctx.strokeStyle = "#3d4a57";
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(padL, yError(0));
+    ctx.lineTo(padL + plotW, yError(0));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // label sumbu x
+    ctx.fillStyle = "#9aa7b4";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillText("0 s", padL, padT + plotH + 6);
+    ctx.textAlign = "right";
+    ctx.fillText(`${tMax.toFixed(1)} s`, padL + plotW, padT + plotH + 6);
+
+    function line(series, yScale, color) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      let drawing = false;
+      for (let i = 0; i < series.length; i++) {
+        const value = series[i];
+        if (!Number.isFinite(value)) { drawing = false; continue; }
+        const px = x(i), py = yScale(value);
+        if (!drawing) { ctx.moveTo(px, py); drawing = true; }
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      // titik terakhir
+      for (let i = series.length - 1; i >= 0; i--) {
+        if (!Number.isFinite(series[i])) continue;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x(i), yScale(series[i]), 3, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+    }
+
+    line(speed, ySpeed, "#4cc2ff");
+    line(error, yError, "#ffb454");
+    status.textContent = `${history.t.length} titik dari ${history.rows ?? "?"} baris`;
+  }
+
+  // --- loop utama ----------------------------------------------------------------
+  async function refreshStatus() {
+    if (statusBusy) return;
+    statusBusy = true;
+    if (!hasLoaded) show("loading");
+    try {
+      render(await api(statusPath()));
+      hasLoaded = true;
+    } catch (error) {
+      show("error");
+      byId("connection").dataset.kind = "error";
+      setConnection("error", "Dashboard terputus");
+      byId("errorText").textContent = `${error.message}. Periksa proses dashboard dan direktori log, lalu segarkan.`;
+    } finally {
+      statusBusy = false;
+    }
+  }
+
+  async function refreshRuns() {
+    if (runsBusy || demoMode) return;
+    runsBusy = true;
+    try {
+      renderRuns((await api("/api/runs")).runs);
+    } catch (error) { /* daftar run gagal: status tetap jalan */ }
+    finally { runsBusy = false; }
+  }
+
+  async function refreshHistory() {
+    if (historyBusy) return;
+    historyBusy = true;
+    try {
+      const history = demoMode
+        ? (await api("/api/demo")).history
+        : await api(historyPath());
+      drawChart(history);
+    } catch (error) {
+      byId("chartStatus").textContent = "gagal memuat grafik";
+    } finally {
+      historyBusy = false;
+    }
+  }
+
+  async function tickStatus() {
+    await refreshStatus();
+    tick += 1;
+    if (tick % HISTORY_EVERY === 0) refreshHistory();
+  }
+
+  // --- event UI -------------------------------------------------------------------
+  byId("refresh").addEventListener("click", () => {
+    refreshStatus();
+    refreshRuns();
+    refreshHistory();
+  });
+  byId("demoMode").addEventListener("change", event => {
+    demoMode = event.target.checked;
+    connectionState = "loading";
+    hasLoaded = false;
+    refreshStatus();
+    refreshHistory();
+  });
+  byId("runSelect").addEventListener("change", event => {
+    selectedRun = event.target.value;
+    connectionState = "loading";
+    refreshStatus();
+    refreshHistory();
+  });
+  byId("connectFeed").addEventListener("click", connectFeed);
+  byId("clearFeed").addEventListener("click", () => {
+    feedUrl.value = "";
+    try { localStorage.removeItem("mizuro-dashboard-feed-url"); }
+    catch (error) { /* storage bisa dimatikan */ }
+    clearFeed("Feed diputuskan");
+  });
+  feedUrl.addEventListener("keydown", event => {
+    if (event.key === "Enter") connectFeed();
+  });
+
+  refreshRuns();
+  refreshStatus();
+  refreshHistory();
+  window.setInterval(tickStatus, STATUS_MS);
+  window.setInterval(refreshRuns, RUNS_MS);
+</script>
+</body>
+</html>

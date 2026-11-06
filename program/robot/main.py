@@ -6,6 +6,11 @@ self-check, mode bench `--stream-only` (kamera + MJPEG + tracker lajur,
 TANPA motor), dan mode closed-loop `--closed-loop` (persepsi -> Stanley ->
 MCU, dry_run default). Mode live dengan motor butuh dry_run=false +
 roda terangkat + E-stop fisik.
+
+Flag `--dashboard` (bench/pit) menyalakan server dashboard run di thread
+terpisah selama mode berjalan — membaca log yang SEDANG ditulis proses
+ini, jadi telemetry terlihat hidup di browser. Default OFF: saat lomba
+semua HTTP wajib mati.
 """
 from __future__ import annotations
 
@@ -165,7 +170,36 @@ def build_detector(config: Config):
     raise ValueError(f"checkpoint_mode tidak dikenal: {mode}")
 
 
-def stream_only(config: Config) -> None:
+def serve_dashboard(config: Config, port: int, feed_url: str = ""):
+    """Bench/pit: serve dashboard run di thread daemon.
+
+    Dashboard membaca log run yang SEDANG ditulis proses ini
+    (`latest_status` memilih run terbaru dari disk), jadi telemetry
+    terlihat hidup di browser tanpa pipa antar-proses.
+
+    `feed_url` (opsional) = URL MJPEG mode ini; di-inject ke halaman
+    sehingga panel kamera langsung terisi.
+
+    WAJIB mati saat percobaan lomba — aturan melarang komunikasi apa
+    pun dengan robot selama run. Bind mengikuti `stream_host`
+    (default 127.0.0.1; 0.0.0.0 hanya jaringan pit tepercaya).
+    """
+    import threading
+
+    from dashboard import make_server
+
+    host = config.stream_host or "127.0.0.1"
+    server = make_server(host, port, Path(config.output_dir),
+                         feed_url=feed_url)
+    threading.Thread(target=server.serve_forever, name="dashboard",
+                     daemon=True).start()
+    print(f"dashboard : http://{host}:{server.server_port}/ "
+          f"(log: {config.output_dir})")
+    print("PERINGATAN: matikan dashboard + stream sebelum percobaan lomba")
+    return server
+
+
+def stream_only(config: Config, dashboard_port: int | None = None) -> None:
     """Bench: kamera CSI + MJPEG + tracker lajur. TANPA motor, TANPA serial.
 
     Mode ini tidak menyentuh serial dan tidak menggerakkan apa pun:
@@ -227,6 +261,8 @@ def stream_only(config: Config) -> None:
         print(f"dump   : {dump_dir} (setiap frame ke-30)")
         print("Ctrl+C untuk berhenti")
         n = 0
+        dash = (serve_dashboard(config, dashboard_port, feed_url=server.url)
+                if dashboard_port is not None else None)
         try:
             while True:
                 frame = cam.read()
@@ -256,9 +292,13 @@ def stream_only(config: Config) -> None:
                           f"stasiun {tracker.last_debug.get('stations_found')}")
         except KeyboardInterrupt:
             print(f"\nstop setelah {n} frame")
+        finally:
+            if dash is not None:
+                dash.shutdown()
+                dash.server_close()
 
 
-def run_closed(config: Config) -> None:
+def run_closed(config: Config, dashboard_port: int | None = None) -> None:
     """Fase 4: loop kontrol tertutup — persepsi -> Stanley -> MCU.
 
     dry_run default true: loop penuh berjalan (kamera, tracker,
@@ -313,11 +353,18 @@ def run_closed(config: Config) -> None:
               f"{config.run_timeout_s:.0f}s")
         print(f"log        : {log.path}")
         print("Ctrl+C untuk berhenti")
-        runner.run()
-        print(f"\nSelesai: {runner.iterations} iterasi, "
-              f"{runner.overruns} overrun, "
-              f"{runner.lane_lost_count} frame lajur hilang")
-        print(f"Log: {log.path}")
+        dash = (serve_dashboard(config, dashboard_port)
+                if dashboard_port is not None else None)
+        try:
+            runner.run()
+            print(f"\nSelesai: {runner.iterations} iterasi, "
+                  f"{runner.overruns} overrun, "
+                  f"{runner.lane_lost_count} frame lajur hilang")
+            print(f"Log: {log.path}")
+        finally:
+            if dash is not None:
+                dash.shutdown()
+                dash.server_close()
 
 
 def main() -> None:
@@ -335,7 +382,21 @@ def main() -> None:
                         help="Fase 4: persepsi -> Stanley -> MCU. dry_run "
                              "default true (tanpa serial). Motor hanya "
                              "nyala kalau dry_run=false + roda terangkat")
+    parser.add_argument("--dashboard", action="store_true",
+                        help="bench/pit: serve dashboard run selama mode "
+                             "berjalan (butuh --stream-only atau "
+                             "--closed-loop). MATIKAN saat lomba")
+    parser.add_argument("--dashboard-port", type=int, default=18765,
+                        help="port dashboard (default: 18765)")
     args = parser.parse_args()
+
+    if args.dashboard and not (args.stream_only or args.closed_loop):
+        raise SystemExit(
+            "--dashboard butuh --stream-only atau --closed-loop; "
+            "dashboard membaca log run yang sedang ditulis mode tersebut")
+    if not 1 <= args.dashboard_port <= 65535:
+        raise SystemExit(
+            f"--dashboard-port harus dalam [1, 65535]: {args.dashboard_port}")
 
     if args.self_check:
         self_check()
@@ -349,10 +410,12 @@ def main() -> None:
             f"config tidak ditemukan: {args.config}; "
             f"salin dari robot.example.json dan sesuaikan")
     if args.stream_only:
-        stream_only(config)
+        stream_only(config,
+                    args.dashboard_port if args.dashboard else None)
         return
     if args.closed_loop:
-        run_closed(config)
+        run_closed(config,
+                   args.dashboard_port if args.dashboard else None)
         return
     if not config.dry_run:
         raise SystemExit(

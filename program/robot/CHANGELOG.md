@@ -5,6 +5,107 @@ Riwayat paket runtime robot (`program/robot/`). Scaffold lama
 build baru dimulai. Format: satu entri per commit besar, plus catatan
 verifikasi dan yang BELUM diuji.
 
+## 2026-11-06 — main.py --dashboard: dashboard nyala bersama runtime
+
+Branch `feature/camera-mount-offset`.
+
+- `main.py`: flag `--dashboard` (+ `--dashboard-port`, default 18765)
+  menyalakan server dashboard di thread daemon selama mode
+  `--stream-only` atau `--closed-loop` berjalan. Dashboard membaca
+  log run yang SEDANG ditulis proses ini (`latest_status` memilih run
+  terbaru dari disk) — telemetry terlihat hidup tanpa pipa
+  antar-proses. Default OFF: saat lomba semua HTTP wajib mati, jadi
+  opt-in eksplisit; `--dashboard` sendirian (tanpa mode) = SystemExit
+  dengan penjelasan.
+- URL MJPEG di-inject ke halaman: di `--stream-only`, URL stream
+  (`server.url`) dikirim ke `make_server(..., feed_url=)` dan
+  menggantikan placeholder `__FEED_URL__` di `dashboard.html` —
+  panel kamera langsung terisi, operator tidak ketik manual.
+  Di-escape lewat `dashboard._js_string()` (kutip, backslash, `<`)
+  sebelum masuk literal JS inline.
+- Shutdown bersih: `dash.shutdown()` + `server_close()` di `finally`
+  kedua mode — Ctrl+C atau run selesai tidak meninggalkan server
+  nyangkut.
+- `dashboard.py`: `make_server` menerima `feed_url` opsional;
+  `_js_string()` escape; self-check sekarang assert injeksi URL +
+  token bersih.
+- `dashboard.html`: `const DEFAULT_FEED = "__FEED_URL__";` — nilai
+  awal field kamera (localStorage tetap menang kalau ada).
+- `tests/test_main.py` (baru): 5 tes — `--dashboard` tanpa mode
+  ditolak, `--dashboard-port` di luar [1, 65535] ditolak (termasuk
+  0), `serve_dashboard` start/serve/stop + injeksi URL + pesan
+  peringatan, dan dashboard melihat RunLog hidup (run terbaru,
+  fresh, nilai command benar).
+- `tests/test_dashboard.py`: +3 tes — `_js_string` escape,
+  injeksi URL (payload `" onload=` tidak bocor mentah), token bersih
+  kalau `feed_url` kosong.
+- `README.md`: baris flag `--dashboard`/`--dashboard-port` + bagian
+  "Dashboard dari main.py" dengan contoh output.
+- Belum diuji: `--stream-only --dashboard` dengan kamera CSI asli
+  (butuh Jetson); panel kamera same-origin vs cross-port di browser
+  sungguhan.
+
+## 2026-11-06 — dashboard.py + dashboard.html: dashboard run full (bench/pit)
+
+Branch `feature/camera-mount-offset`.
+
+- `dashboard.py` (baru, stdlib only): server HTTP read-only buat
+  `runs/run-*/telemetry.csv` + `events.jsonl`. Tanpa dependensi luar —
+  jalan dengan `/usr/bin/python3` di Jetson apa adanya. Endpoint:
+  `/api/status` (run terbaru atau `?run=`), `/api/runs` (daftar run +
+  jumlah baris), `/api/history?points=` (deret waktu buat grafik,
+  downsample indeks rata — 240 titik dari 18.000 baris), `/api/demo`
+  (data sintetis buat preview UI). Flag: `--runs` (default `runs`
+  relatif cwd, sama seperti `output_dir` main.py), `--host` (default
+  127.0.0.1), `--port` (default 18765), `--self-check`.
+- `dashboard.html` (baru, file TERPISAH — bisa diedit anggota tim
+  tanpa menyentuh Python): UI bahasa Indonesia, tema gelap. Isi:
+  readout kecepatan/kemudi besar + meter kemudi, readout confidence /
+  error lateral (mm) / error heading (derajat) / radius belokan,
+  grafik canvas dua sumbu (kecepatan m/s + error lateral mm vs waktu,
+  DPR-aware, null-safe), pemilih run (analisis run lama setelah
+  lomba), preview kamera MJPEG opsional (URL di localStorage, validasi
+  http/https saja), mode simulasi, indikator freshness (mtime < 3 s =
+  log hidup), daftar event runtime.
+- Keamanan: hanya NAMA event yang dikirim — detail event (bisa berisi
+  config/secret seperti `serial_device`) tidak pernah diekspos; nama
+  run dari query divalidasi regex (`run-[\w.-]+`), path traversal
+  ditolak HTTP 400; CSP + `Cache-Control: no-store` +
+  `X-Content-Type-Options: nosniff` di setiap respons; semua endpoint
+  read-only (tidak ada yang menulis/menggerakkan motor).
+- Freshness + run asli: `latest_status` memilih run terbaru secara
+  leksikografis (`run-YYYYmmdd-HHMMSS`), `list_runs` menghitung baris
+  per run, `run_history` membaca CSV penuh dengan `csv.reader` +
+  peta indeks header (lebih cepat dari DictReader untuk 18k baris).
+- `tests/test_dashboard.py` (baru): 24 tes — number() junk/NaN/inf,
+  latest_status (baris terakhir, whitelist event + anti-kebocoran
+  secret, freshness, run terbaru, run eksplisit, traversal ditolak,
+  run hilang, header-only, FAULT reason), list_runs (urutan + flag
+  latest + hitung baris), run_history (downsample rata, clamp points,
+  run kosong, traversal), demo_status, server HTTP (halaman, status,
+  runs, history, demo, 400 traversal, 404, header keamanan), dan
+  `self_check()` stdlib-only.
+- Bug yang ketangkap tes saat development: downsample awal pakai
+  stride + append baris terakhir -> jumlah titik bisa melampaui
+  `points` (21 titik untuk points=10 karena clamp minimum 20);
+  diganti indeks rata `round(i*last/(count-1))` — tepat `points`
+  titik, ujung selalu termasuk. Assertion self-check juga salah
+  (run lama tanpa baris data masih `available` kalau ada
+  `t_monotonic`) — sudah diperbaiki jadi cek state STOPPED.
+- `README.md`: bagian "Dashboard run" (flag, endpoint, fitur,
+  keamanan, peringatan lomba) + baris di tabel isi paket.
+- `AGENTS.md` (root): code map diperbaiki — `program/robot/` adalah
+  runtime KANONIK (package `mizuro`, flag `--closed-loop`),
+  `program/jetson/` adalah scaffold Inggris lama (referensi saja,
+  jangan salin kode/protokolnya), `program/robot-fw/` copy scaffold
+  lama. Verification, interpreter/camera, protokol/config, status
+  persepsi, dan keselamatan diupdate ke path + status paket `robot`
+  (lane keeping CV + Stanley + closed-loop runner selesai; motor
+  belum pernah menyala).
+- Belum diuji: tampilan di browser sungguhan (grafik canvas, feed
+  MJPEG, mode simulasi) — butuh buka halaman di laptop; beban
+  `list_runs` + `run_history` pada file 18k baris di SD card Jetson.
+
 ## 2026-11-05 — models/: direktori file model (gitignored)
 
 Branch `feature/camera-mount-offset`.

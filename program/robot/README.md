@@ -43,6 +43,9 @@ python3 tools/replay_control.py --offset 0.2 --heading 20
 # boot kering: BOOT -> READY -> STOPPED, menulis log, roda tidak bergerak
 cp robot.example.json robot.json   # lalu sesuaikan
 python3 main.py --config robot.json
+
+# dashboard run (bench/pit): baca runs/run-*/ di browser
+python3 dashboard.py --runs runs --port 18765
 ```
 
 Di Jetson, pakai `/usr/bin/python3` (OpenCV JetPack + GStreamer). `.venv`
@@ -56,6 +59,8 @@ serta test suite repo ini.
 | `--self-check` | Verifikasi fondasi: config, state machine, protokol, MCU stub | Tidak ada | Tidak |
 | `--stream-only` | Bench persepsi: kamera CSI + MJPEG (`:8080/stream`) + tracker lajur | Kamera | Tidak |
 | `--closed-loop` | Loop kontrol: kamera → tracker → Stanley → MCU. `dry_run` default true = log saja, serial tidak disentuh | Kamera (+ MCU kalau live) | Hanya kalau `dry_run=false` |
+| `--dashboard` | Bench/pit: serve dashboard run (`:18765`) selama mode berjalan. Butuh `--stream-only`/`--closed-loop` | Tidak | Tidak |
+| `--dashboard-port` | Port dashboard (default 18765) | — | — |
 | `--config PATH` | Tunjuk file config (default `robot.json`) | — | — |
 
 Tanpa flag → `boot_dry` (heartbeat nol, langsung exit; sisa Fase 0).
@@ -71,6 +76,32 @@ Tanpa flag → `boot_dry` (heartbeat nol, langsung exit; sisa Fase 0).
 # terangkat + E-stop fisik + arus terbatas:
 /usr/bin/python3 -u main.py --closed-loop --config robot.json
 ```
+
+## Dashboard dari main.py (`--dashboard`)
+
+Daripada jalanin `dashboard.py` terpisah, flag `--dashboard` menyalakan
+server dashboard di thread daemon **selama mode berjalan** — membaca
+log run yang sedang ditulis proses ini, jadi telemetry terlihat hidup
+di browser:
+
+```sh
+# bench kamera + tracker + dashboard (URL MJPEG otomatis terisi):
+/usr/bin/python3 -u main.py --stream-only --dashboard
+# → stream   : http://127.0.0.1:8080/
+# → dashboard: http://127.0.0.1:18765/  (panel kamera sudah nyambung)
+
+# closed-loop dry-run + dashboard (lihat command Stanley hidup):
+/usr/bin/python3 -u main.py --closed-loop --dashboard
+```
+
+- Default **OFF** — saat lomba semua HTTP wajib mati; flag eksplisit
+  supaya tidak pernah nyala tidak sengaja.
+- Butuh `--stream-only` atau `--closed-loop` (dashboard membaca log
+  yang ditulis mode tersebut); sendirian = error.
+- URL MJPEG di-inject ke halaman (panel kamera langsung terisi, tidak
+  perlu ketik manual) — di-escape dulu sebelum masuk literal JS.
+- Server berhenti bersih saat mode selesai/Ctrl+C (`finally`).
+- Port bisa diubah: `--dashboard-port 18766`.
 
 ## Isi paket
 
@@ -88,6 +119,7 @@ Tanpa flag → `boot_dry` (heartbeat nol, langsung exit; sisa Fase 0).
 | `mizuro/perception/geometry.py` | fit kuadratik robust + bobot, state lajur, confidence |
 | `mizuro/perception/classical.py` | `LaneTracker`: Otsu → stasiun → fit, dua pass |
 | `mizuro/perception/synth.py` | generator frame sintetis + ground truth eksak |
+| `dashboard.py` + `dashboard.html` | dashboard run read-only (bench/pit); HTML terpisah supaya bisa diedit tim |
 
 ### Catatan persepsi (pelajaran yang mahal)
 
@@ -123,6 +155,52 @@ Tanpa flag → `boot_dry` (heartbeat nol, langsung exit; sisa Fase 0).
 - **findChessboardCorners butuh kotak GELAP di background TERANG** —
   pola terbalik gagal total (tes sintetis membuktikan). Cetakan
   standar hitam-di-putih aman.
+
+## Dashboard run (`dashboard.py`)
+
+Pembaca log lokal — menampilkan `runs/run-*/telemetry.csv` +
+`events.jsonl` di browser: kecepatan, command kemudi, error lajur,
+confidence, state machine, event runtime, dan grafik deret waktu.
+Stdlib only (tanpa dependensi), jadi jalan dengan `/usr/bin/python3`
+di Jetson apa adanya.
+
+```sh
+# dari folder program/robot (path runs/ relatif terhadap cwd):
+python3 dashboard.py --runs runs --port 18765
+
+# verifikasi tanpa hardware (tes baca log + serve HTTP beneran):
+python3 dashboard.py --self-check
+```
+
+| Flag | Default | Kegunaan |
+|---|---|---|
+| `--runs PATH` | `runs` | direktori log runtime (sama seperti `output_dir` di config) |
+| `--host` | `127.0.0.1` | `0.0.0.0` hanya untuk jaringan pit tepercaya (tidak ada autentikasi) |
+| `--port` | `18765` | port HTTP |
+| `--self-check` | — | verifikasi stdlib-only, tanpa hardware |
+
+Endpoint JSON (read-only): `/api/status` (run terbaru atau `?run=`),
+`/api/runs` (daftar run), `/api/history?points=` (deret waktu buat
+grafik), `/api/demo` (data sintetis buat preview UI).
+
+Fitur halaman (`dashboard.html` — file terpisah, bisa diedit anggota
+tim tanpa menyentuh Python):
+
+- pemilih run (terbaru atau run lama buat analisis setelah lomba)
+- grafik canvas: kecepatan (m/s) + error lateral (mm) terhadap waktu,
+  downsampled server-side (240 titik dari 18.000 baris)
+- preview kamera MJPEG opsional (URL disimpan di localStorage) —
+  cocok dengan `main.py --stream-only` (`http://<ip>:8080/stream`)
+- mode simulasi: data sintetis buat cek UI tanpa robot
+- indikator freshness: log dianggap hidup kalau mtime < 3 detik
+
+Keamanan: hanya nama event yang dikirim (detail event bisa berisi
+config — tidak pernah diekspos); nama run dari query divalidasi
+regex (path traversal ditolak, HTTP 400); CSP + `no-store` +
+`nosniff` di setiap respons.
+
+**Aturan lomba: matikan dashboard sebelum setiap percobaan** —
+tidak ada komunikasi apa pun dengan robot selama run.
 
 ## Deteksi checkpoint (`checkpoint_mode`)
 

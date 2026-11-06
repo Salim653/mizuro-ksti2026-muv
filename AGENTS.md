@@ -14,8 +14,9 @@ All repository documents are written in Indonesian. Follow that convention. The 
 
 ## Code map: which files are canonical
 
-- `program/jetson/`: the canonical Python robot runtime. Entry point is `main.py`, with flags `--self-check`, `--stream-only`, and `--config PATH`.
-- `program/robot-fw/`: an old English scaffold copy. Its files overlap with `jetson/` and are NOT guaranteed to be in sync. `requirements.txt` and `requirements-jetson.txt` exist only here.
+- `program/robot/`: **the canonical Python robot runtime** (package `mizuro`). Entry point is `main.py`, with flags `--self-check`, `--stream-only`, `--closed-loop`, and `--config PATH`. Dashboard: `dashboard.py` + `dashboard.html` (HTML terpisah supaya bisa diedit tim). All new work happens here.
+- `program/jetson/`: OLD English scaffold — reference only, NOT canonical. It predates the `mizuro` package, the closed-loop runner, and the checkpoint detector; its flat imports (`from camera import ...`) and `StartGate` do not exist in the canonical runtime. Do not copy code or protocol from it without checking `program/robot/` first. Its `dashboard.py`/`dashboard.html` were ported into `program/robot/`.
+- `program/robot-fw/`: an old English scaffold copy. Its files overlap with `robot/` and are NOT guaranteed to be in sync. `requirements.txt` and `requirements-jetson.txt` exist only here.
 - `program/body-mcu/body_controller.ino`: MCU firmware for Arduino-compatible boards. The Uno is only for syntax checking. The real target is the STM32F401/F411 Blackpill, per `docs/project-notes/`.
 - `program/arena-3d/`: a 3D arena simulator that runs in the browser. Open `index.html` directly, no server needed. It also exports datasets with ground truth.
 - `program/sim-viz/server_viz.py`: ONNX inference server (default port 8766, endpoint `POST /predict`).
@@ -26,39 +27,46 @@ All repository documents are written in Indonesian. Follow that convention. The 
 
 ## Verification (no hardware needed)
 
-This repo has no pytest, linter, or CI. Verification means running the self-check and compile steps. Always run them from `program/jetson`, because the `runs/` path and config paths are relative to the working directory:
+This repo has no pytest, linter, or CI. Verification means running the self-check and compile steps. Always run them from `program/robot`, because the `runs/` path and config paths are relative to the working directory:
 
 ```sh
-cd program/jetson
+cd program/robot
 /usr/bin/python3 main.py --self-check
 /usr/bin/python3 dashboard.py --self-check
-/usr/bin/python3 -m py_compile main.py camera.py core.py stream.py vision.py controller.py mcu.py telemetry.py
+/usr/bin/python3 -m py_compile main.py dashboard.py mizuro/*.py mizuro/perception/*.py tools/*.py
+../../.venv/bin/python -m pytest tests/ -q
 ```
 
 ## Interpreter and camera (Jetson): the biggest pitfalls
 
-- The runtime MUST use `/usr/bin/python3`. It has the JetPack OpenCV build with GStreamer. The repo's `.venv` uses the pip `opencv-python` package, which has NO GStreamer, so `camera.py` fails with an explicit error message. Never run `pip install opencv-python` on the Jetson. `requirements-jetson.txt` explains why.
+- The runtime MUST use `/usr/bin/python3`. It has the JetPack OpenCV build with GStreamer. The repo's `.venv` uses the pip `opencv-python` package, which has NO GStreamer, so `mizuro/camera.py` fails with an explicit error message. Never run `pip install opencv-python` on the Jetson. `requirements-jetson.txt` explains why.
 - To check the backend, run `python3 -c "import cv2; print(cv2.getBuildInformation())"`. The output must include `GStreamer: YES`.
-- Only ONE process may hold the CSI camera at a time. `--stream-only` opens the camera without arming the robot. The endpoints `/`, `/stream`, and `/snapshot` are served on `stream_host:stream_port` (default `0.0.0.0:8080`).
-- `camera.py` rejects any frame whose size differs from `image_width` and `image_height` in the config.
-- `.pt` model files are gitignored. Bench scripts expect the file in their own folder. Copies exist at the repo root.
+- Only ONE process may hold the CSI camera at a time. `--stream-only` opens the camera without arming the robot. The endpoints `/`, `/stream`, and `/snapshot` are served on `stream_host:stream_port` (default `127.0.0.1:8080`).
+- `mizuro/camera.py` rejects any frame whose size differs from `image_width` and `image_height` in the config.
+- `.pt` model files are gitignored. The canonical location is `program/robot/models/` (see `models/README.md`); bench scripts `test-yolo*/` expect their own copies in their folders. `yolo11n-seg.onnx` is referenced by path from the repo root by `tests/test_detector.py`.
 
 ## Binding protocol and config
 
-- Serial from Jetson to MCU: ASCII `speed_mps,steering_rad\n`, 4 decimal places, 115200 baud. Hard limits are ±0.8 m/s and ±0.55 rad. `format_command` raises an error outside these ranges. Changing the limits means changing the protocol on both sides and the firmware.
-- `Config.load()` rejects unknown keys and validates ranges. Live mode requires `camera_pipeline`, `model_path`, and `serial_device` to be set. `dry_run` defaults to `true`.
+- Serial from Jetson to MCU: ASCII `speed_mps,steering_rad\n`, 4 decimal places, 115200 baud. Hard limits are ±0.8 m/s and ±0.55 rad. `format_command` (in `mizuro/protocol.py`) raises an error outside these ranges. Changing the limits means changing the protocol on both sides and the firmware.
+- `Config.load()` (in `mizuro/config.py`) rejects unknown keys and validates ranges. Live mode requires `serial_device`; `model_path` is only required when `checkpoint_mode` is `"model"`. `dry_run` defaults to `true`.
 - The control loop targets `loop_hz` (default 60 Hz). Overruns are logged as `loop_overrun` events. The camera cannot be forced to run that fast.
-- Run logs go to `runs/run-<timestamp>/telemetry.csv` and `events.jsonl` (gitignored). The dashboard reads these logs: `dashboard.py --runs PATH`, default `127.0.0.1:18765`.
+- Run logs go to `runs/run-<timestamp>/telemetry.csv` and `events.jsonl` (gitignored, relative to the working directory). The dashboard reads these logs: `dashboard.py --runs PATH`, default `127.0.0.1:18765`.
 
-## Perception status: do not expect the robot to move yet
+## Perception status: lane keeping done, motors never fired
 
-`vision.py` is intentionally a placeholder. `OnnxDetector.infer` only returns `raw_shape`. `LaneEstimator` returns confidence 0, so `Controller` always sends speed 0. The next core tasks are writing the ONNX decoder and the lane estimator. Validate them against ground truth in `program/arena-3d/` before connecting motors.
+The canonical runtime is FURTHER along than the old `program/jetson/` scaffold — do not trust the scaffold's `vision.py` placeholder as current status:
+
+- Lane keeping is classical CV (`mizuro/perception/classical.py`): Otsu → stations → robust quadratic fit. Synthetic ground-truth eval: median lateral error 0.73 mm, heading 0.11°.
+- Control is Stanley (`mizuro/controller.py`); the closed-loop runner (`mizuro/runner.py`, `main.py --closed-loop`) wires perception → Stanley → MCU with `dry_run` default true — the full loop runs and logs, serial is never touched.
+- Checkpoint detection is selectable via `checkpoint_mode`: `none` (default) | `cv` (classical color/shape) | `model` (YOLO ONNX via cv2.dnn). The detector never controls the robot; results are logged only.
+- What is NOT done yet: validation with the real camera on the floor, MCU status protocol (MCU → Jetson feedback), checkpoint spec/dataset from the Technical Meeting, and any wheels-up bench with motors.
 
 ## Safety (competition rules, not preferences)
 
 - A physical E-stop cuts drive power independently of the Jetson. The MCU watchdog (100 ms) is the last line of defense. Never disable `dry_run` or connect the drive motors before bench testing with the wheels lifted off the ground.
 - During a competition attempt there must be NO communication. Stop the stream, dashboard, and all HTTP servers before each attempt.
-- `dashboard.py --host 0.0.0.0` is only for trusted pit networks. It has no authentication.
+- `dashboard.py --host 0.0.0.0` (in `program/robot/`) is only for trusted pit networks. It has no authentication.
+- `main.py --dashboard` starts the dashboard in a daemon thread next to `--stream-only`/`--closed-loop`. It is OFF by default and stops cleanly when the mode ends; still, kill every HTTP server before a competition attempt.
 
 ## Git and working tree
 
