@@ -219,7 +219,7 @@ def stream_only(config: Config, dashboard_port: int | None = None) -> None:
 
     import cv2
 
-    from mizuro.camera import Camera
+    from mizuro.camera import Camera, EndOfVideo
     from mizuro.perception.calibration import CameraCalibration
     from mizuro.perception.classical import LaneTracker
     from mizuro.stream import FrameHub, MjpegServer
@@ -292,6 +292,10 @@ def stream_only(config: Config, dashboard_port: int | None = None) -> None:
                           f"stasiun {tracker.last_debug.get('stations_found')}")
         except KeyboardInterrupt:
             print(f"\nstop setelah {n} frame")
+        except EndOfVideo:
+            # Sumber = file video (bench): habis -> berhenti bersih.
+            print(f"\nvideo selesai setelah {n} frame "
+                  f"({config.camera_pipeline})")
         finally:
             if dash is not None:
                 dash.shutdown()

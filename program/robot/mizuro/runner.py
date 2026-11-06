@@ -18,11 +18,14 @@ Kontrak keselamatan yang ditegakkan loop ini:
    stale, dan mode mismatch hanya di-log — watchdog MCU sudah memutus
    penggerak sendiri, Python tidak menggantungkan keselamatan pada
    kemampuan membaca balik.
+7. Video file habis (bench replay) -> event `video_ended`, loop
+   berhenti bersih lewat shutdown biasa (perintah nol terakhir).
 """
 from __future__ import annotations
 
 import time
 
+from .camera import EndOfVideo
 from .protocol import FIRMWARE_MODES
 from .states import State, StateMachine
 from .telemetry import RunLog
@@ -88,7 +91,13 @@ class ClosedLoopRunner:
                 break
 
             t0 = time.monotonic()
-            command = self._iterate(now)
+            try:
+                command = self._iterate(now)
+            except EndOfVideo:
+                # Bench replay: file video habis — berhenti bersih lewat
+                # shutdown biasa (perintah nol terakhir), bukan FAULT.
+                self.log.event("video_ended")
+                break
             elapsed_ms = (time.monotonic() - t0) * 1000.0
 
             # Heartbeat: MCU butuh setpoint segar setiap iterasi.

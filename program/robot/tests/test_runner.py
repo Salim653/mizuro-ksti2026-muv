@@ -414,6 +414,39 @@ def test_status_polling_does_not_block_heartbeat(log):
     assert mcu.read_status_calls >= 5
 
 
+# --- video file habis (bench replay) ------------------------------------------
+
+def test_video_ended_stops_loop_cleanly(log):
+    """Video habis -> event video_ended, stop bersih + perintah nol."""
+    from mizuro.camera import EndOfVideo
+
+    class EndingCamera(StubCamera):
+        """Bertahan 3 frame lalu EndOfVideo (mirror file video selesai)."""
+
+        def __init__(self, frames_before_end=3):
+            super().__init__()
+            self.left = frames_before_end
+
+        def read(self):
+            self.reads += 1
+            self.left -= 1
+            if self.left < 0:
+                raise EndOfVideo("video selesai")
+            return np.zeros((480, 640, 3), dtype=np.uint8)
+
+    cam = EndingCamera()
+    mcu = StubMcu()
+    trk = StubTracker([_obs(t=float(i)) for i in range(10)])
+    r = _runner(log, cam, trk, mcu, loop_hz=1000.0, timeout_s=5.0)
+    r.run()
+    events = _read_events(log)
+    assert any(e["event"] == "video_ended" for e in events)
+    assert r.machine.state is State.STOPPED
+    assert r.iterations == 3
+    assert mcu.commands[-1].reason == "shutdown"
+    assert mcu.commands[-1].speed_mps == 0.0
+
+
 # --- pembantu -----------------------------------------------------------------
 
 def _read_events(log) -> list[dict]:

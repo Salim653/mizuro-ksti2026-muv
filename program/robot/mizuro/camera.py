@@ -1,4 +1,4 @@
-"""Kamera CSI (GStreamer) dengan penjagaan yang gagal keras.
+"""Kamera CSI (GStreamer) + file video untuk bench tanpa hardware.
 
 Dua jebakan besar di Jetson:
 
@@ -10,6 +10,14 @@ Dua jebakan besar di Jetson:
    debug; kalau pipeline tidak terbuka, penyebab paling sering adalah
    proses lain (dashboard/stream lama) masih pegang kamera.
 
+SUMBER VIDEO (bench tanpa hardware): kalau `camera_pipeline` berisi path
+file video (bukan pipeline GStreamer), kamera dibuka sebagai file biasa
+TANPA CAP_GSTREAMER — jadi replay video jalan dengan cv2 pip `.venv` di
+laptop, tanpa Jetson. Habisnya video = EndOfVideo (bukan error); dengan
+`video_loop=True` file diputar ulang dari awal. Frame di-resize ke
+ukuran kalibrasi kalau beda (video rekaman jarang persis resolusi
+config) — beda dari sumber CSI yang ukurannya DITOLAK.
+
 `opener` bisa disuntikkan untuk tes: fungsi () -> objek bergaya cv2.VideoCapture
 dengan `isOpened()`, `read()`, `release()`. Tanpa suntikan, cv2 asli dipakai.
 """
@@ -18,12 +26,30 @@ from __future__ import annotations
 import sys
 
 
+class EndOfVideo(RuntimeError):
+    """Frame habis: file video selesai (bukan kegagalan kamera)."""
+
+
 def has_gstreamer(cv2) -> bool:
     """True kalau build cv2 ini punya backend GStreamer."""
     for line in cv2.getBuildInformation().splitlines():
         if "GStreamer:" in line:
             return line.split("GStreamer:")[1].strip().upper().startswith("YES")
     return False
+
+
+def is_gstreamer_pipeline(pipeline: str) -> bool:
+    """True kalau `pipeline` adalah pipeline GStreamer, bukan path file.
+
+    Heuristik: pipeline GStreamer selalu punya pemisah elemen '!'
+    (`nvarguscamerasrc ! ... ! appsink`); path file/URL tidak. Kalau
+    butuh pipeline custom, PASTIKAN ada '!' — tanpa itu string
+    diperlakukan sebagai path file dan dibuka tanpa CAP_GSTREAMER.
+    """
+    if not pipeline:
+        return False
+    return ("!" in pipeline or "appsink" in pipeline
+            or "nvarguscamerasrc" in pipeline)
 
 
 def nvargus_pipeline(width: int, height: int, fps: int = 30,
@@ -41,15 +67,23 @@ def nvargus_pipeline(width: int, height: int, fps: int = 30,
 class Camera:
     """Pembungkus tipis cv2.VideoCapture dengan validasi ukuran frame.
 
-    Ukuran frame yang berbeda dari kalibrasi = bug diam-diam (homography
-    salah posisi), jadi read() menolak, bukan mengembalikan frame aneh.
+    Dua jenis sumber:
+
+    - GStreamer (CSI bawaan atau pipeline custom dengan '!'): ukuran
+      frame yang berbeda dari kalibrasi = bug diam-diam (homography
+      salah posisi), jadi read() menolak, bukan mengembalikan frame aneh.
+    - file video (path tanpa '!'): bench tanpa hardware. Frame di-resize
+      ke ukuran kalibrasi kalau beda, dan habisnya video = EndOfVideo.
+      Tidak butuh backend GStreamer.
     """
 
     def __init__(self, pipeline: str, width: int, height: int, *,
-                 opener=None, undistort=None) -> None:
+                 opener=None, undistort=None, video_loop: bool = False) -> None:
         import cv2
         self.cv2 = cv2
-        if not has_gstreamer(cv2):
+        # Path file video tidak butuh GStreamer; CSI/pipeline butuh.
+        self.is_file = bool(pipeline) and not is_gstreamer_pipeline(pipeline)
+        if not self.is_file and not has_gstreamer(cv2):
             raise RuntimeError(
                 f"cv2 {cv2.__version__} at {sys.executable} has no GStreamer "
                 "backend; run this with /usr/bin/python3 (JetPack OpenCV), "
@@ -61,30 +95,80 @@ class Camera:
         # direktifikasi sekali di sini supaya semua hilir (tracker,
         # homography) melihat gambar pinhole dengan K yang sama.
         self._undistort = undistort
+        self.video_loop = video_loop
         self.cap = self._open()
 
     def _open(self):
         if self._opener is not None:
             cap = self._opener(self.pipeline)
+        elif self.is_file:
+            # File video: backend biasa (ffmpeg), TANPA CAP_GSTREAMER —
+            # jalan dengan cv2 pip .venv di laptop.
+            cap = self.cv2.VideoCapture(self.pipeline)
         else:
             cap = self.cv2.VideoCapture(self.pipeline, self.cv2.CAP_GSTREAMER)
         if cap is None or not cap.isOpened():
+            if self.is_file:
+                raise RuntimeError(
+                    f"video gagal dibuka: {self.pipeline}. "
+                    "File tidak ada atau formatnya tidak didukung build "
+                    "cv2 ini.")
             raise RuntimeError(
                 f"kamera gagal dibuka: {self.pipeline}. "
                 "Penyebab paling sering: proses lain masih memegang kamera "
                 "CSI (stream/dashboard lama), atau pipeline salah.")
         return cap
 
+    @property
+    def source_fps(self) -> float:
+        """FPS sumber (video file); 0.0 kalau tidak diketahui."""
+        if self.cap is None:
+            return 0.0
+        try:
+            return float(self.cap.get(self.cv2.CAP_PROP_FPS) or 0.0)
+        except Exception:
+            return 0.0
+
+    def _restart(self) -> bool:
+        """Putar ulang video dari frame pertama (mode loop)."""
+        if self.cap is None:
+            return False
+        try:
+            self.cap.set(self.cv2.CAP_PROP_POS_FRAMES, 0.0)
+            return True
+        except Exception:
+            return False
+
     def read(self):
         """Satu frame BGR (height, width, 3). Melempar kalau gagal.
 
         Kalau kalibrasi punya koefisien distorsi, frame di-undistort
         dulu (ukuran tidak berubah — K yang sama dipakai tracker).
+
+        File video: habis -> EndOfVideo (atau putar ulang kalau
+        `video_loop`); ukuran beda -> di-resize ke ukuran kalibrasi.
         """
         ok, frame = self.cap.read()
         if not ok or frame is None:
-            raise RuntimeError("pembacaan frame kamera gagal")
-        if frame.shape[1] != self.width or frame.shape[0] != self.height:
+            if self.is_file:
+                if self.video_loop and self._restart():
+                    ok, frame = self.cap.read()
+                if not ok or frame is None:
+                    raise EndOfVideo(
+                        f"pembacaan frame gagal: video selesai "
+                        f"({self.pipeline})")
+            else:
+                raise RuntimeError("pembacaan frame kamera gagal")
+        if self.is_file:
+            # Replay: ukuran video rekaman jarang persis resolusi config.
+            if frame.shape[1] != self.width or frame.shape[0] != self.height:
+                shrink = (frame.shape[1] > self.width
+                          or frame.shape[0] > self.height)
+                frame = self.cv2.resize(
+                    frame, (self.width, self.height),
+                    interpolation=self.cv2.INTER_AREA if shrink
+                    else self.cv2.INTER_LINEAR)
+        elif frame.shape[1] != self.width or frame.shape[0] != self.height:
             raise RuntimeError(
                 f"ukuran frame tak terduga {frame.shape[1]}x{frame.shape[0]}, "
                 f"harap {self.width}x{self.height}")
@@ -106,10 +190,13 @@ class Camera:
 
     @classmethod
     def from_config(cls, config, *, opener=None,
-                    undistort=None) -> "Camera":
-        """Bangun dari Config: pipeline kosong = CSI bawaan.
+                    undistort=None, video_loop: bool = False) -> "Camera":
+        """Bangun dari Config.
 
-        `undistort` = (K, dist) opsional dari kalibrasi terukur.
+        `camera_pipeline` kosong = CSI bawaan; mengandung '!' = pipeline
+        GStreamer; selain itu = path file video (bench tanpa hardware).
+        `video_loop` = putar ulang file kalau habis (buat run panjang).
         """
         return cls(config.camera_pipeline, config.image_width,
-                   config.image_height, opener=opener, undistort=undistort)
+                   config.image_height, opener=opener, undistort=undistort,
+                   video_loop=video_loop)

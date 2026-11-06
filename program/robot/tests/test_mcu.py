@@ -194,3 +194,24 @@ def test_read_status_read_error_marks_link_dead():
                   opener=lambda dev, baud: fake)
     assert mcu.read_status() is None
     assert mcu.alive is False
+
+
+def test_context_manager_closes_port():
+    """`with McuLink(...) as mcu` dipakai main.py --closed-loop; tanpa
+    __enter__ mode itu crash sebelum loop pertama (bug laten 2026-11-06)."""
+    fake = FakeSerial()
+    with McuLink("/dev/fake", dry_run=False, driver="skid4_l298n",
+                 opener=lambda dev, baud: fake) as mcu:
+        mcu.send(Command(0.2, 0.0))
+        assert mcu.alive is True
+    assert fake.closed is True
+    assert mcu.serial is None
+    assert mcu.alive is False
+
+
+def test_context_manager_dry_run():
+    """Dry-run pun harus bisa dipakai dengan `with` (self-check/main)."""
+    with McuLink("/dev/ttyTIDAKADA", dry_run=True) as mcu:
+        mcu.send(Command(0.2, 0.0))
+        assert mcu.serial is None
+    assert mcu.alive is True

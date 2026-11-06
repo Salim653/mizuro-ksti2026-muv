@@ -1,4 +1,5 @@
-"""Tes kamera: penjagaan GStreamer, validasi ukuran, opener suntikan.
+"""Tes kamera: penjagaan GStreamer, validasi ukuran, opener suntikan,
+dan sumber file video (bench tanpa hardware).
 
 Tidak ada hardware di sini. `opener` disuntikkan sebagai pengganti
 cv2.VideoCapture; penjagaan build-info diuji lewat monkeypatch.
@@ -6,30 +7,57 @@ cv2.VideoCapture; penjagaan build-info diuji lewat monkeypatch.
 import numpy as np
 import pytest
 
-from mizuro.camera import Camera, has_gstreamer, nvargus_pipeline
+from mizuro.camera import (
+    Camera,
+    EndOfVideo,
+    has_gstreamer,
+    is_gstreamer_pipeline,
+    nvargus_pipeline,
+)
 from mizuro.config import Config
+
+# Pipeline GStreamer (ada '!') vs path file video (tanpa '!').
+GST_PIPE = "nvarguscamerasrc ! videoconvert ! appsink"
+FILE_PIPE = "recordings/video-uji.mp4"
 
 
 class FakeCapture:
-    """cv2.VideoCapture tiruan: bisa diprogram gagal/beda ukuran."""
+    """cv2.VideoCapture tiruan: bisa diprogram gagal/beda ukuran/loop."""
 
     def __init__(self, pipeline, frames=None, fail_open=False,
-                 shape=(480, 640, 3)):
+                 shape=(480, 640, 3), fail_read_after=None):
         self.pipeline = pipeline
-        self.frames = list(frames or [])
+        self._initial = list(frames or [])
+        self.frames = list(self._initial)
         self.fail_open = fail_open
         self.shape = shape
         self.released = False
         self.reads = 0
+        self.seeks = 0
+        # None = read() selalu sukses (zeros kalau frames habis);
+        # N = gagal setelah N pembacaan (mirror video selesai).
+        self.fail_read_after = fail_read_after
 
     def isOpened(self):
         return not self.fail_open
 
     def read(self):
         self.reads += 1
+        if self.fail_read_after is not None and self.reads > self.fail_read_after:
+            return False, None
         if self.frames:
             return True, self.frames.pop(0)
         return True, np.zeros(self.shape, dtype=np.uint8)
+
+    def set(self, prop, value):
+        self.seeks += 1
+        if value == 0:                      # CAP_PROP_POS_FRAMES = 0
+            self.frames = list(self._initial)
+            self.reads = 0                  # penghitung kegagalan ikut reset
+        return True
+
+    def get(self, prop):
+        return 60.0
 
     def release(self):
         self.released = True
@@ -57,7 +85,7 @@ def test_rejects_build_without_gstreamer(monkeypatch):
 def test_open_failure_message_mentions_other_process(monkeypatch):
     monkeypatch.setattr("mizuro.camera.has_gstreamer", lambda cv2: True)
     with pytest.raises(RuntimeError, match="kamera gagal dibuka"):
-        Camera("pipa-uji", 640, 480,
+        Camera(GST_PIPE, 640, 480,
                opener=lambda p: FakeCapture(p, fail_open=True))
 
 
@@ -71,8 +99,9 @@ def test_read_returns_frame(monkeypatch):
 
 
 def test_read_rejects_wrong_size(monkeypatch):
+    """Sumber GStreamer: ukuran beda dari kalibrasi DITOLAK (bug homography)."""
     monkeypatch.setattr("mizuro.camera.has_gstreamer", lambda cv2: True)
-    cam = Camera("pipa-uji", 640, 480,
+    cam = Camera(GST_PIPE, 640, 480,
                  opener=lambda p: FakeCapture(p, shape=(240, 320, 3)))
     with pytest.raises(RuntimeError, match="ukuran frame tak terduga"):
         cam.read()
@@ -85,7 +114,7 @@ def test_read_failure_raises(monkeypatch):
         def read(self):
             return False, None
 
-    cam = Camera("pipa-uji", 640, 480, opener=lambda p: DeadCapture(p))
+    cam = Camera(GST_PIPE, 640, 480, opener=lambda p: DeadCapture(p))
     with pytest.raises(RuntimeError, match="pembacaan frame"):
         cam.read()
 
@@ -159,3 +188,70 @@ def test_from_config_passes_undistort(monkeypatch):
     cam = Camera.from_config(cfg, opener=lambda p: FakeCapture(p),
                              undistort=(k, dist))
     assert cam._undistort is not None
+
+
+# --- sumber file video (bench tanpa hardware) -------------------------------
+
+def test_is_gstreamer_pipeline():
+    assert is_gstreamer_pipeline(GST_PIPE)
+    assert is_gstreamer_pipeline(nvargus_pipeline(640, 480))
+    assert not is_gstreamer_pipeline("")
+    assert not is_gstreamer_pipeline(FILE_PIPE)
+    assert not is_gstreamer_pipeline("/home/kazero/laps/capture_001.mp4")
+
+
+def test_file_source_does_not_require_gstreamer(monkeypatch):
+    """Video file boleh jalan dengan cv2 pip .venv (tanpa GStreamer)."""
+    monkeypatch.setattr("mizuro.camera.has_gstreamer", lambda cv2: False)
+    cam = Camera(FILE_PIPE, 640, 480, opener=lambda p: FakeCapture(p))
+    assert cam.is_file is True
+    assert cam.pipeline == FILE_PIPE
+
+
+def test_file_open_failure_message_mentions_file(monkeypatch):
+    monkeypatch.setattr("mizuro.camera.has_gstreamer", lambda cv2: False)
+    with pytest.raises(RuntimeError, match="video gagal dibuka"):
+        Camera(FILE_PIPE, 640, 480,
+               opener=lambda p: FakeCapture(p, fail_open=True))
+
+
+def test_file_read_failure_raises_end_of_video(monkeypatch):
+    """Video habis = EndOfVideo (bukan RuntimeError kamera)."""
+    monkeypatch.setattr("mizuro.camera.has_gstreamer", lambda cv2: False)
+    cam = Camera(FILE_PIPE, 640, 480,
+                 opener=lambda p: FakeCapture(p, fail_read_after=0))
+    with pytest.raises(EndOfVideo, match="video selesai"):
+        cam.read()
+
+
+def test_file_video_loop_restarts(monkeypatch):
+    """video_loop=True: habis -> seek ke 0 -> frame pertama lagi."""
+    monkeypatch.setattr("mizuro.camera.has_gstreamer", lambda cv2: False)
+    frames = [np.full((480, 640, 3), i, dtype=np.uint8) for i in (10, 20)]
+    holder = {}
+
+    def opener(p):
+        holder["cap"] = FakeCapture(p, frames=frames, fail_read_after=2)
+        return holder["cap"]
+
+    cam = Camera(FILE_PIPE, 640, 480, opener=opener, video_loop=True)
+    assert cam.read()[0, 0, 0] == 10
+    assert cam.read()[0, 0, 0] == 20
+    assert cam.read()[0, 0, 0] == 10        # loop: frame pertama lagi
+    assert holder["cap"].seeks == 1
+
+
+def test_file_read_resizes_to_config_size(monkeypatch):
+    """Video rekaman jarang persis resolusi config -> di-resize."""
+    monkeypatch.setattr("mizuro.camera.has_gstreamer", lambda cv2: False)
+    frame = np.full((240, 320, 3), 99, dtype=np.uint8)
+    cam = Camera(FILE_PIPE, 640, 480,
+                 opener=lambda p: FakeCapture(p, frames=[frame]))
+    out = cam.read()
+    assert out.shape == (480, 640, 3)
+
+
+def test_file_source_fps_from_capture(monkeypatch):
+    monkeypatch.setattr("mizuro.camera.has_gstreamer", lambda cv2: False)
+    cam = Camera(FILE_PIPE, 640, 480, opener=lambda p: FakeCapture(p))
+    assert cam.source_fps == 60.0

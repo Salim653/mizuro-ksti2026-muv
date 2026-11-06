@@ -14,7 +14,7 @@ All repository documents are written in Indonesian. Follow that convention. The 
 
 ## Code map: which files are canonical
 
-- `program/robot/`: **the canonical Python robot runtime** (package `mizuro`). Entry point is `main.py`, with flags `--self-check`, `--stream-only`, `--closed-loop`, and `--config PATH`. Dashboard: `dashboard.py` + `dashboard.html` (HTML terpisah supaya bisa diedit tim). All new work happens here.
+- `program/robot/`: **the canonical Python robot runtime** (package `mizuro`). Entry point is `main.py`, with flags `--self-check`, `--stream-only`, `--closed-loop`, and `--config PATH`. Dashboard: `dashboard.py` + `dashboard.html` (HTML terpisah supaya bisa diedit tim). Bench tanpa hardware: `tools/mcu_bench.py` (video sebagai kamera + `tools/virtual_mcu.py` = cermin pemetaan output firmware; roda fisik tidak bisa menyala dari sana). All new work happens here.
 - `program/jetson/`: OLD English scaffold — reference only, NOT canonical. It predates the `mizuro` package, the closed-loop runner, and the checkpoint detector; its flat imports (`from camera import ...`) and `StartGate` do not exist in the canonical runtime. Do not copy code or protocol from it without checking `program/robot/` first. Its `dashboard.py`/`dashboard.html` were ported into `program/robot/`.
 - `program/robot-fw/`: an old English scaffold copy. Its files overlap with `robot/` and are NOT guaranteed to be in sync. `requirements.txt` and `requirements-jetson.txt` exist only here.
 - `program/body-mcu/body_controller.ino`: MCU firmware for Arduino-compatible boards (v2: tiga mode output runtime-selectable `skid4`/`esc1`/`hb1`, parser ketat, watchdog 100 ms, e-stop active-low, baris status `#v1,...` 10 Hz). The Uno is only for syntax checking. The real target is the STM32F401/F411 Blackpill, per `docs/project-notes/`. Tes tanpa hardware: `program/body-mcu/test/run_tests.sh` (g++ + mock `Arduino.h`/`Servo.h`). Pin map dan parameter skid masih placeholder — lihat `program/body-mcu/README.md`.
@@ -35,6 +35,13 @@ cd program/robot
 /usr/bin/python3 dashboard.py --self-check
 /usr/bin/python3 -m py_compile main.py dashboard.py mizuro/*.py mizuro/perception/*.py tools/*.py
 ../../.venv/bin/python -m pytest tests/ -q
+```
+
+Bench tanpa hardware (video sebagai kamera + MCU virtual, tidak butuh Jetson):
+
+```sh
+cd program/robot
+../../.venv/bin/python tools/mcu_bench.py --video ../../recordings/capture_001.mp4 --duration 30
 ```
 
 ## Interpreter and camera (Jetson): the biggest pitfalls

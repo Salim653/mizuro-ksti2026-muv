@@ -40,6 +40,10 @@ python3 tools/replay_control.py --offset 0.2 --heading 20
 # rekam dataset: frame mentah + index.csv timestamped (Jetson):
 /usr/bin/python3 tools/record_dataset.py --frames 200
 
+# bench tanpa hardware: video sebagai kamera + MCU virtual
+# (persepsi -> Stanley -> PWM per roda, tanpa Jetson/motor):
+../../.venv/bin/python tools/mcu_bench.py --video ../../recordings/capture_001.mp4
+
 # boot kering: BOOT -> READY -> STOPPED, menulis log, roda tidak bergerak
 cp robot.example.json robot.json   # lalu sesuaikan
 python3 main.py --config robot.json
@@ -83,6 +87,55 @@ Tanpa flag → `boot_dry` (heartbeat nol, langsung exit; sisa Fase 0).
 /usr/bin/python3 -u main.py --closed-loop --config robot.json
 ```
 
+## Bench tanpa hardware: video sebagai kamera
+
+Loop closed-loop penuh (persepsi → Stanley → MCU) bisa dijalankan
+**tanpa Jetson, tanpa kamera, tanpa motor** — kamera diganti file video
+dan MCU diganti `VirtualMcu` (pemetaan output firmware dijalankan di
+Python, PWM per roda dicatat):
+
+```sh
+# dari program/robot, pakai .venv (TIDAK butuh GStreamer):
+../../.venv/bin/python tools/mcu_bench.py --video ../../recordings/capture_001.mp4
+
+# opsi:
+../../.venv/bin/python tools/mcu_bench.py --video laps.mp4 --duration 60
+../../.venv/bin/python tools/mcu_bench.py --video laps.mp4 --driver external_esc
+../../.venv/bin/python tools/mcu_bench.py --video laps.mp4 --no-loop
+../../.venv/bin/python tools/mcu_bench.py --video laps.mp4 --dashboard-port 18765
+```
+
+Yang diuji: tracker lajur di video nyata, keputusan Stanley, dan apa
+yang AKAN dikirim ke roda (PWM per roda / pulse ESC / pulse servo).
+Yang TIDAK diuji: polaritas kabel motor, netral ESC sungguhan, batas
+servo, E-stop fisik, watchdog dengan kabel dicabut — itu sesi bench
+dengan roda terangkat (PANDUAN-LANJUTAN-TIM butir 6).
+
+Cara kamera tahu sumbernya (`mizuro/camera.py`):
+
+| `camera_pipeline` | Sumber | Butuh GStreamer | Ukuran frame beda |
+|---|---|---|---|
+| kosong | CSI bawaan (`nvarguscamerasrc`) | ya | ditolak (bug kalibrasi) |
+| ada `!` (mis. `nvarguscamerasrc ! ... ! appsink`) | pipeline GStreamer | ya | ditolak |
+| selain itu (mis. `laps.mp4`) | file video | tidak | di-resize ke ukuran config |
+
+Video habis = `EndOfVideo` (bukan error): `--closed-loop` dan
+`--stream-only` berhenti bersih, `mcu_bench.py` memutar ulang file
+kecuali `--no-loop`. Jadi `--stream-only` juga bisa dipakai dengan
+video: set `camera_pipeline` di config ke path file, jalankan seperti
+biasanya.
+
+Output bench: `runs/run-*/` (telemetry.csv + events.jsonl, bisa dibuka
+`dashboard.py --runs runs`) + `bench_summary.json` (statistik motor
+virtual: PWM maks, ganti arah, clamp bersama, rentang pulse ESC/servo).
+
+Catatan hasil bench pertama (capture_001.mp4, 1280×720): confidence
+median 0.82, 16/16 stasiun terdeteksi, polarity `dark_on_light`.
+Error lateral besar di 8 detik pertama (+340 mm, steer jenuh) lalu
+konvergen ke ±40 mm — mount/kalibrasi video rekaman belum cocok dengan
+default config; itu justru yang mau di-tuning di sini sebelum roda
+menyala.
+
 ## Dashboard dari main.py (`--dashboard`)
 
 Daripada jalanin `dashboard.py` terpisah, flag `--dashboard` menyalakan
@@ -119,7 +172,7 @@ di browser:
 | `mizuro/types.py` | `Command` (muatan serial), `Observation` (hasil persepsi), `McuStatus` (status MCU) |
 | `mizuro/telemetry.py` | `runs/run-*/telemetry.csv` + `events.jsonl` |
 | `mizuro/mcu.py` | tautan serial; `send()` = heartbeat; kirim mode saat port dibuka; `read_status()` non-blocking; gagal tulis → `alive=False` |
-| `mizuro/camera.py` | CSI/GStreamer; gagal keras kalau cv2 tanpa GStreamer |
+| `mizuro/camera.py` | CSI/GStreamer (gagal keras kalau cv2 tanpa GStreamer) + file video buat bench (tanpa GStreamer, `EndOfVideo` kalau habis) |
 | `mizuro/stream.py` | MJPEG bench-only: FrameHub encode-once + server HTTP |
 | `mizuro/perception/calibration.py` | piksel ↔ tanah (konvensi ray arena-3d), homography |
 | `mizuro/perception/geometry.py` | fit kuadratik robust + bobot, state lajur, confidence |

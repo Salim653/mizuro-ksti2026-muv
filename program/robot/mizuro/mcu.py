@@ -116,3 +116,9 @@ class McuLink:
                 pass
             self.serial = None
             self.alive = False
+
+    def __enter__(self) -> "McuLink":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()

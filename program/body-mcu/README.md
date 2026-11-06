@@ -129,6 +129,18 @@ ganti mode, format baris status, formatter angka tanpa `printf %f`.
 Yang TIDAK diuji di sini: timing hardware sungguhan (PWM 50 Hz servo,
 arus L298N), kalibrasi netral ESC di ESC sungguhan, dan compile board.
 
+### Cermin Python (bench tanpa hardware)
+
+`program/robot/tools/virtual_mcu.py` menjalankan pemetaan output yang
+SAMA (skid4/esc1/hb1, clamp, deadband ESC, arming hold, status `#v1,...`)
+di Python, dipakai `program/robot/tools/mcu_bench.py` untuk menguji loop
+closed-loop penuh dengan video sebagai kamera — tanpa Jetson, tanpa
+motor. Itu cermin untuk bench: **authority tetap file `.ino` ini dan tes
+host di atas**. Kalau angka keduanya berbeda, firmware yang benar —
+perbaiki cerminnya, jangan sebaliknya. `tests/test_virtual_mcu.py`
+mengunci nilai cermin ke angka tes host (134/121, 193/255, 35, 1770,
+1569, 1573).
+
 ### Compile board (Jetson — `arduino-cli` di repo ini aarch64-only)
 
 ```sh

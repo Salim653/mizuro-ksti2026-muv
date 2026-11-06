@@ -5,6 +5,48 @@ Riwayat paket runtime robot (`program/robot/`). Scaffold lama
 build baru dimulai. Format: satu entri per commit besar, plus catatan
 verifikasi dan yang BELUM diuji.
 
+## 2026-11-06 (tambahan) — video-file sebagai kamera + bench tanpa hardware
+
+Alat bench baru untuk menguji loop penuh (persepsi → Stanley → MCU)
+**tanpa Jetson, tanpa motor, tanpa hardware**, hanya dengan:
+
+- `tools/virtual_mcu.py` — cermin pemetaan output firmware `body_controller.ino`
+  (skid4/esc1/hb1, clamp, ESP arming hold 2s, status MCU sintetis).
+- `tools/mcu_bench.py` CLI:
+
+  ```
+  ../../.venv/bin/python tools/mcu_bench.py --video ../../recordings/capture_001.mp4 --duration 30
+  ../../.venv/bin/python tools/mcu_bench.py --video laps.mp4 --driver external_esc
+  ../../.venv/bin/python tools/mcu_bench.py --video laps.mp4 --no-loop
+  ../../.venv/bin/python tools/mcu_bench.py --video laps.mp4 --dashboard-port 18765
+  ```
+
+  - Kamera = file video (bukan CSI, tidak butuh GStreamer, kecuali `--dashboard-port`).
+  - MCU = VirtualMcu (dry-run selalu, wheels tidak pernah menyala di sini).
+
+  Output: `runs/run-*/telemetry.csv` + `events.jsonl` +
+  `bench_summary.json` (statistik motor virtual: PWM maks, ganti arah,
+  clamp bersama, rentang pulse ESC/servo).
+
+- `tests/test_camera.py` ditambah:
+  - sumber file video (heuristic `"!"` → GStreamer).
+  - EndOfVideo handling (bukan RuntimeError).
+
+- `tests/test_virtual_mcu.py` (baru) mengunci nilai cermin ke angka tes host firmware.
+
+- `tests/test_mcu_bench.py` (baru) verifikasi pembentukan config dan argumen CLI.
+
+- `program/robot/mizuro/camera.py`:
+  - sumber file video: heuristik `"!"` = pipeline GStreamer, selain itu =
+    path file; ukuran beda di-resize ke config; habis = `EndOfVideo`
+    (bukan error); flag `video_loop` buat putar ulang file.
+- `program/robot/main.py`: `stream_only` menangkap `EndOfVideo` (video
+  habis = berhenti bersih, bukan traceback).
+
+- **Verifikasi:** 385 pytest + self-check + py_compile + run bench video
+  berhasil — loop penuh + wheel-summary berhasil pada persepsi nyata
+  (video capture_001.mp4).
+
 ## 2026-11-06 — MCU v2: tiga mode output + protokol status balik
 
 Branch `feature/mcu-v2-status`.
