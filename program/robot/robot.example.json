@@ -43,7 +43,7 @@
   "run_timeout_s": 300,
   "dry_run": true,
   "save_frames": false,
-  "motor_driver": "external_esc",
+  "motor_driver": "skid4_l298n",
   "stream_enabled": false,
   "stream_host": "127.0.0.1",
   "stream_port": 8080,

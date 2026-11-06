@@ -11,9 +11,16 @@ import json
 from dataclasses import dataclass, fields
 from pathlib import Path
 
-from .protocol import DEFAULT_BAUD, MAX_SPEED_MPS, MAX_STEER_RAD
+from .protocol import (
+    DEFAULT_BAUD,
+    FIRMWARE_MODES,
+    MAX_SPEED_MPS,
+    MAX_STEER_RAD,
+)
 
-MOTOR_DRIVERS = {"external_esc", "mcu_hbridge"}
+# motor_driver yang sah = kunci FIRMWARE_MODES (sumber kebenaran tunggal
+# bersama firmware: menambah hardware berarti menambah entri di sana).
+MOTOR_DRIVERS = frozenset(FIRMWARE_MODES)
 LANE_POLARITIES = {"auto", "light_on_dark", "dark_on_light"}
 CHECKPOINT_MODES = {"none", "cv", "model"}
 
@@ -91,7 +98,11 @@ class Config:
     # --- mode ---
     dry_run: bool = True
     save_frames: bool = False
-    motor_driver: str = "external_esc"
+    # Tahap output firmware MCU. skid4_l298n = prototype SEKARANG
+    # (4x L298N, skid steer, mixing di MCU). Ganti ke external_esc saat
+    # pindah ke mekanik kompetisi (1x ESC brushless + servo kemudi).
+    # Diteruskan ke MCU sebagai #M,<mode> saat port serial dibuka.
+    motor_driver: str = "skid4_l298n"
 
     # --- stream kamera (bench/pit saja; MATIKAN saat lomba) ---
     stream_enabled: bool = False

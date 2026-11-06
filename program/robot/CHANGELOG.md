@@ -5,6 +5,53 @@ Riwayat paket runtime robot (`program/robot/`). Scaffold lama
 build baru dimulai. Format: satu entri per commit besar, plus catatan
 verifikasi dan yang BELUM diuji.
 
+## 2026-11-06 — MCU v2: tiga mode output + protokol status balik
+
+Branch `feature/mcu-v2-status`.
+
+- **Firmware** (`program/body-mcu/body_controller.ino`, ditulis ulang):
+  tiga mode output runtime-selectable lewat serial `#M,<mode>\n` —
+  `skid4` (prototype: 4x L298N, skid steer, mixing `speed+steer` → roda
+  kiri/kanan dilakukan di MCU), `esc1` (kompetisi: ESC brushless +
+  servo kemudi), `hb1` (bench: 1 motor PWM/DIR + servo). Tanpa
+  `printf %f` (newlib-nano AVR) — formatter manual `appendFixed`.
+- **Protokol dua arah** (`mizuro/protocol.py`): `FIRMWARE_MODES`
+  (`external_esc`→`esc1`, `mcu_hbridge`→`hb1`, `skid4_l298n`→`skid4`),
+  `format_mode()`, dan `parse_status_line()` untuk baris status
+  `#v1,<mode>,<estop>,<stale>,<speed_out>,<steer_out>,<rx_ok>,<uptime_ms>`
+  (validasi ketat: 8 field, mode whitelist, batas ±0.8/±0.55, int
+  non-negatif; baris rusak diabaikan, bukan exception).
+- **`mizuro/mcu.py`**: param `driver` (divalidasi selalu, dry-run pun —
+  config salah gagal di konstruktor, bukan jadi output salah di roda),
+  kirim `#M,<mode>` saat port dibuka, `read_status()` non-blocking
+  dengan buffer dibatasi (`MAX_STATUS_BUFFER=256`).
+- **`mizuro/runner.py`**: `_poll_mcu_status()` di loop setelah
+  `mcu.send()` — event `mcu_status_ready`/`mcu_status_lost`/
+  `mcu_status_recovered`, `mcu_estop`/`mcu_estop_clear`,
+  `mcu_stale`/`mcu_stale_clear`, `mcu_mode_mismatch`/`mcu_mode_ok`
+  (bandingkan `status.mode` vs `FIRMWARE_MODES[mcu.driver]`), param
+  `status_timeout_s` (default 2.0). Sengaja TIDAK mengubah state
+  machine: watchdog MCU sudah memutus penggerak independen dari Python.
+- **`mizuro/config.py`**: `MOTOR_DRIVERS` = kunci `FIRMWARE_MODES`
+  (sumber kebenaran tunggal); default `motor_driver` jadi
+  `skid4_l298n` (hardware prototype sekarang). `robot.json` dan
+  `robot.example.json` disamakan.
+- **Tes**: `tests/test_protocol.py` (+17: `format_mode`,
+  `parse_status_line` valid/rusak/batas), `tests/test_mcu.py` (+10:
+  FakeSerial `in_waiting`/`read`, baris mode saat port dibuka, driver
+  invalid, parsing/partial/junk/OSError), `tests/test_runner.py` (+8:
+  StubMcu `driver`/`read_status`, event status, dry-run tidak poll),
+  `tests/test_config.py` (+2: semua driver firmware diterima).
+  `program/body-mcu/test/`: tes host g++ + mock `Arduino.h`/`Servo.h`
+  — 120 check, 18 tes, `-Wall -Wextra -Werror`.
+- **Verifikasi**: `pytest tests/ -q` = 354 lolos (baseline 312);
+  `main.py --self-check`, `dashboard.py --self-check`, `py_compile`
+  lolos; `test/run_tests.sh` 120 check 0 failure.
+- **Belum diuji**: compile Blackpill (core `stm32duino` belum terpasang
+  di Jetson — `arduino-cli` repo ini aarch64-only), pin map dan
+  `SKID_TRACK_M`/deadband ESC masih placeholder, status balik dengan
+  MCU sungguhan, roda belum pernah menyala.
+
 ## 2026-11-06 — main.py --dashboard: dashboard nyala bersama runtime
 
 Branch `feature/camera-mount-offset`.

@@ -191,3 +191,19 @@ def test_mount_ranges_rejected():
         Config(mount_yaw_deg=60.0).validate()
     with pytest.raises(ValueError, match="mount_roll_deg"):
         Config(mount_roll_deg=-60.0).validate()
+
+
+# --- motor_driver (tahap output firmware) --------------------------------------
+
+def test_all_firmware_drivers_accepted():
+    """Setiap motor_driver yang punya mode firmware harus lolos validasi —
+    prototype 4x L298N (skid4_l298n) termasuk."""
+    from mizuro.protocol import FIRMWARE_MODES
+    for driver in FIRMWARE_MODES:
+        Config(motor_driver=driver).validate()
+
+
+def test_skid4_driver_accepted():
+    cfg = Config(motor_driver="skid4_l298n")
+    cfg.validate()
+    assert cfg.motor_driver == "skid4_l298n"

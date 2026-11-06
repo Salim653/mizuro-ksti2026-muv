@@ -48,6 +48,12 @@ python3 main.py --config robot.json
 python3 dashboard.py --runs runs --port 18765
 ```
 
+`motor_driver` di `robot.json` memilih tahap output firmware MCU
+(`skid4_l298n` = prototype 4x L298N sekarang, `external_esc` = target
+kompetisi, `mcu_hbridge` = bench). Nilainya diterjemahkan jadi perintah
+`#M,<mode>` dan dikirim ke MCU saat port serial dibuka — lihat
+`program/body-mcu/README.md`.
+
 Di Jetson, pakai `/usr/bin/python3` (OpenCV JetPack + GStreamer). `.venv`
 repo memakai opencv-python pip dan hanya untuk skrip bench `test-yolo*/`
 serta test suite repo ini.
@@ -108,11 +114,11 @@ di browser:
 | Modul | Peran |
 |---|---|
 | `mizuro/config.py` | dataclass config; key asing ditolak, rentang divalidasi |
-| `mizuro/protocol.py` | protokol serial `speed_mps,steering_rad\n` + batas ±0.8/±0.55 |
+| `mizuro/protocol.py` | protokol serial `speed_mps,steering_rad\n` + batas ±0.8/±0.55, perintah mode `#M,<mode>\n`, parser status `#v1,...` |
 | `mizuro/states.py` | BOOT/READY/RUNNING/DEGRADED/STOPPED/FAULT; FAULT terminal |
-| `mizuro/types.py` | `Command` (muatan serial) dan `Observation` (hasil persepsi) |
+| `mizuro/types.py` | `Command` (muatan serial), `Observation` (hasil persepsi), `McuStatus` (status MCU) |
 | `mizuro/telemetry.py` | `runs/run-*/telemetry.csv` + `events.jsonl` |
-| `mizuro/mcu.py` | tautan serial; `send()` = heartbeat; gagal tulis → `alive=False` |
+| `mizuro/mcu.py` | tautan serial; `send()` = heartbeat; kirim mode saat port dibuka; `read_status()` non-blocking; gagal tulis → `alive=False` |
 | `mizuro/camera.py` | CSI/GStreamer; gagal keras kalau cv2 tanpa GStreamer |
 | `mizuro/stream.py` | MJPEG bench-only: FrameHub encode-once + server HTTP |
 | `mizuro/perception/calibration.py` | piksel ↔ tanah (konvensi ray arena-3d), homography |
@@ -281,9 +287,11 @@ di-set — dataset SAMA dengan input detector di runtime.
 4. **Fase 3 — kontrol** ( Stanley + speed profile selesai): replay sim
    against track geometry lolos (converge <5mm steady-state). Tinggal:
    tuning terhadap persepsi nyata (butuh mock lane/arena).
-5. **Fase 4 — closed-loop + MCU** (runner selesai): `--closed-loop`
-   persepsi -> Stanley -> MCU, dry_run default. Tinggal: MCU status
-   protocol (feedback MCU -> Jetson), bench roda terangkat.
+5. **Fase 4 — closed-loop + MCU** (runner + status balik selesai):
+   `--closed-loop` persepsi -> Stanley -> MCU, dry_run default. Status
+   MCU (`#v1,...`) di-poll tiap iterasi dan dicatat sebagai event
+   (`mcu_estop`, `mcu_stale`, `mcu_mode_mismatch`, ...). Tinggal: bench
+   roda terangkat + kalibrasi pin map/ESC/servo.
 6. **Fase 5 — checkpoint** (groundwork selesai): `checkpoint_mode`
    di config memilih backend deteksi checkpoint — `none` (mati,
    default) | `cv` (classical CV warna/bentuk, nol training, ~5 ms)

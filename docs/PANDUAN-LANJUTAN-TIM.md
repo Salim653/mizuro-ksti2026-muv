@@ -40,7 +40,7 @@ Log lokal ditulis ke direktori run; stream MJPEG memakai frame capture yang sama
 - `camera.py`: buka kamera menggunakan OpenCV `CAP_GSTREAMER`; pipeline kosong memilih pipeline Jetson `nvarguscamerasrc` bawaan. Frame yang tidak sesuai ukuran konfigurasi ditolak.
 - `vision.py`: memuat ONNX melalui OpenCV DNN, tetapi saat ini hanya mengembalikan metadata `raw_shape`; belum membaca kelas, kotak/mask, garis, atau confidence sesungguhnya. `LaneEstimator` mengembalikan observasi tanpa geometri lajur.
 - `controller.py`: hanya membuat perintah gerak ketika posisi lajur, heading, dan confidence tersedia. Koefisien steering belum dituning untuk kendaraan.
-- `mcu.py`: menulis satu baris ASCII `speed_mps,steering_rad\n`, empat angka desimal, 115200 baud. Belum membaca status, fault, E-stop, atau handshake dari MCU.
+- `mcu.py`: menulis satu baris ASCII `speed_mps,steering_rad\n`, empat angka desimal, 115200 baud, plus baris mode `#M,<mode>\n` saat port dibuka. Membaca balik status MCU (`#v1,...`) secara non-blocking lewat `read_status()`. Belum ada handshake Jetson-ready, encoder, atau IMU.
 - `telemetry.py`: catat baris CSV dan event JSONL per percobaan.
 - `stream.py`: berbagi frame terbaru; encode JPEG hanya saat ada pemirsa dan dibatasi `stream_fps`. Endpoint `/`, `/stream`, `/snapshot`.
 - `dashboard.py` + `dashboard.html`: HTTP read-only untuk log, default bind `127.0.0.1:18765`. Endpoint `/api/status` dan `/api/demo`; demo berisi data sintetis yang ditandai sebagai demo.
@@ -103,9 +103,21 @@ Stream dan dashboard hanya untuk bench/pit tepercaya. Stream default dapat bind 
 
 ## 6. Batas MCU dan keselamatan
 
-`program/body-mcu/body_controller.ino` menggunakan pin placeholder, serial 115200, timeout watchdog 100 ms, PWM motor dan servo kemudi. E-stop dibaca sebagai input active-low. Sketsa ini **belum** mengimplementasikan tombol start fisik, state run/checkpoint, timer lomba 300 detik, handshake Jetson-ready, status MCU balik, encoder atau IMU.
+`program/body-mcu/body_controller.ino` (v2) punya **tiga mode output** yang dipilih runtime lewat serial `#M,<mode>\n` — tidak perlu flash ulang saat hardware berganti:
 
-Ada selisih penting antara target desain dan contoh firmware: catatan proyek memilih STM32F401/F411 Blackpill, tetapi sketsa memakai `Arduino.h`, `Servo.h` dan contoh perintah Arduino Uno untuk uji sintaks. Konfigurasi driver `external_esc` juga tidak otomatis cocok dengan keluaran `PWM + arah` H-bridge. Untuk ESC RC, sinyal throttle dan rentang netral harus dirancang khusus, diverifikasi dengan datasheet dan diuji tanpa motor/roda menyentuh tanah.
+| mode | hardware | output |
+|------|----------|--------|
+| `skid4` | **prototype sekarang**: 4x motor DC lewat L298N, skid steer tanpa servo | 4x PWM+DIR; mixing `speed+steer` → roda kiri/kanan di MCU |
+| `esc1` | **target kompetisi**: 1x ESC brushless + servo kemudi Ackermann | servo-PWM ESC + servo-PWM kemudi |
+| `hb1` | bench: 1x motor PWM/DIR + servo kemudi | PWM+DIR + servo-PWM |
+
+`motor_driver` di `robot.json` (`skid4_l298n`/`external_esc`/`mcu_hbridge`) adalah sumber kebenaran; `mizuro/protocol.py` menerjemahkannya jadi mode firmware dan mengirimnya saat port dibuka. Protokol: setpoint `speed_mps,steering_rad\n` (batas ±0.8 m/s, ±0.55 rad, 4 desimal) dan status balik `#v1,<mode>,<estop>,<stale>,<speed_out>,<steer_out>,<rx_ok>,<uptime_ms>\n` 10 Hz. Batas protokol harus sama di kedua sisi; mengubahnya berarti mengubah `body_controller.ino` DAN `mizuro/protocol.py`.
+
+Kontrak keselamatan yang sudah ditegakkan firmware: output mati/netral saat boot; watchdog 100 ms memutus penggerak kalau setpoint basi (loop Jetson wajib kirim tiap iterasi sebagai heartbeat); E-stop active-low memotong output terlepas dari serial; setpoint di luar batas atau baris rusak ditolak; ganti mode selalu lewat `safeStop()`; setelah E-stop butuh perintah BARU untuk resume (tidak auto-resume).
+
+Yang **belum** ada: tombol start fisik, state run/checkpoint, timer lomba 300 detik, handshake Jetson-ready, encoder, IMU, dan kecepatan per-roda di baris status (mode `skid4` hanya melaporkan perintah sebelum mixing). Pin map, `SKID_TRACK_M` (0.20 m), dan deadband ESC (40 us) masih **placeholder kalibrasi** — cocokkan dengan wiring dan sasis nyata sebelum flashing. Compile Blackpill (core `stm32duino`) juga belum diverifikasi; `arduino-cli` di repo ini aarch64-only sehingga compile board hanya bisa di Jetson.
+
+Verifikasi tanpa hardware sudah ada: `program/body-mcu/test/run_tests.sh` (g++ + mock `Arduino.h`/`Servo.h`, 120 check) untuk firmware, dan `pytest tests/ -q` di `program/robot` untuk sisi Python (termasuk parser status dan event `mcu_estop`/`mcu_stale`/`mcu_mode_mismatch` di runner).
 
 E-stop harus memutus daya/enable penggerak secara fisik dan independen dari Jetson. Watchdog MCU harus membuat output mati pada boot, data malformed/stale, kehilangan serial, dan fault. Input perangkat lunak bukan pengganti E-stop fisik.
 
@@ -113,7 +125,7 @@ E-stop harus memutus daya/enable penggerak secara fisik dan independen dari Jets
 
 1. **Amankan dan satukan sumber.** Salin patch Jetson ke branch/patch terpisah atau commit di perangkat setelah direview. Ambil commit remote terbaru secara aman. Bandingkan `program/jetson/` dengan `program/robot-fw/`; putuskan mana implementasi kanonis dan hapus duplikasi hanya melalui keputusan tim, bukan saat merge terburu-buru.
 2. **Pulihkan kamera bench.** Pastikan satu proses pemilik CSI, jalankan stream foreground dengan `/usr/bin/python3`, periksa log `events.jsonl`, endpoint `/snapshot`, dan stabilitas capture selama durasi yang disepakati. Catat sensor, pipeline, resolusi/FPS aktual, suhu dan konsumsi CPU. Jangan menganggap stream 60 fps terukur sebelum pengukuran.
-3. **Tentukan antarmuka MCU.** Tetapkan board persis, driver/ESC persis, pin map, satuan, batas, format paket, timeout, status balik, start dan E-stop. Tulis tes parser dan uji watchdog dengan output motor terlepas.
+3. **Tentukan antarmuka MCU.** Tetapkan board persis, driver/ESC persis, pin map, satuan, batas, format paket, timeout, status balik, start dan E-stop. Tulis tes parser dan uji watchdog dengan output motor terlepas. Firmware v2 sudah ada (skid4 prototype + esc1 kompetisi), tapi tetap perlu verifikasi compile Blackpill dan kalibrasi pin/map.
 4. **Selesaikan persepsi offline.** Pastikan model ONNX yang dipakai dan layout outputnya. Implementasikan decoder berbasis format model yang terverifikasi, kalibrasi kamera, proyeksi ground-plane, estimasi garis tengah, confidence dan deteksi kehilangan lajur. Bandingkan pada frame/ground truth dari `program/arena-3d/` sebelum kontrol motor.
 5. **Buat pengujian controller tanpa hardware.** Uji tanda error, satuan, saturasi steering/speed, perilaku confidence rendah, inferensi lambat dan frame stale. Tambahkan test otomatis yang bisa dijalankan di komputer pengembang tanpa kamera.
 6. **Integrasikan di bench dengan roda terangkat.** Uji setiap arah motor, titik netral ESC, batas servo, polaritas, E-stop fisik, watchdog, reset, kehilangan komunikasi dan shutdown. Mulai dari sumber arus terbatas dan kecepatan rendah.

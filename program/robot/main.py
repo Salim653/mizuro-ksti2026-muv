@@ -339,7 +339,8 @@ def run_closed(config: Config, dashboard_port: int | None = None) -> None:
     with RunLog(config.output_dir) as log, \
             Camera.from_config(config, undistort=undistort) as cam, \
             McuLink(config.serial_device, config.serial_baud,
-                    dry_run=config.dry_run) as mcu:
+                    dry_run=config.dry_run,
+                    driver=config.motor_driver) as mcu:
         machine = StateMachine()
         runner = ClosedLoopRunner(
             camera=cam, tracker=tracker, controller=controller, mcu=mcu,

@@ -14,11 +14,16 @@ Kontrak keselamatan yang ditegakkan loop ini:
 4. Timeout run (default 300 s) -> STOPPED.
 5. dry_run: MCU tidak menulis serial, tapi loop penuh berjalan —
    output di-log untuk analisis.
+6. Status MCU (#v1,...) di-poll non-blocking tiap iterasi; e-stop,
+   stale, dan mode mismatch hanya di-log — watchdog MCU sudah memutus
+   penggerak sendiri, Python tidak menggantungkan keselamatan pada
+   kemampuan membaca balik.
 """
 from __future__ import annotations
 
 import time
 
+from .protocol import FIRMWARE_MODES
 from .states import State, StateMachine
 from .telemetry import RunLog
 from .types import Command, Observation
@@ -31,6 +36,7 @@ class ClosedLoopRunner:
                  machine: StateMachine, calib, loop_hz: float = 60.0,
                  run_timeout_s: float = 300.0,
                  max_inference_ms: float = 150.0,
+                 status_timeout_s: float = 2.0,
                  detector=None) -> None:
         self.camera = camera
         self.tracker = tracker
@@ -42,12 +48,20 @@ class ClosedLoopRunner:
         self.loop_hz = loop_hz
         self.run_timeout_s = run_timeout_s
         self.max_inference_ms = max_inference_ms
+        self.status_timeout_s = status_timeout_s
         self.detector = detector
         self._period = 1.0 / loop_hz if loop_hz > 0 else 0.0
         self._stop = False
         self.iterations = 0
         self.overruns = 0
         self.lane_lost_count = 0
+        # State status MCU (diisi _poll_mcu_status; dry-run tidak dipoll).
+        self._mcu_status_seen = False
+        self._mcu_status_at: float | None = None
+        self._mcu_status_lost = False
+        self._mcu_estop = False
+        self._mcu_stale = False
+        self._mcu_mode_mismatch = False
 
     # -- loop utama ------------------------------------------------------
 
@@ -79,6 +93,8 @@ class ClosedLoopRunner:
 
             # Heartbeat: MCU butuh setpoint segar setiap iterasi.
             self.mcu.send(command)
+
+            self._poll_mcu_status()
 
             self._check_overrun(elapsed_ms, now)
             self.iterations += 1
@@ -120,6 +136,69 @@ class ClosedLoopRunner:
         return command
 
     # -- pembantu ----------------------------------------------------------
+
+    def _poll_mcu_status(self) -> None:
+        """Baca balik status MCU (10 Hz) dan catat perubahan penting.
+
+        Sengaja TIDAK mengubah state machine: E-stop fisik dan watchdog
+        MCU sudah memutus penggerak secara independen dari Python. Yang
+        dikerjakan di sini cuma satu — membuat apa yang terjadi terlihat
+        di events.jsonl setelah run:
+
+          mcu_status_ready / mcu_status_lost / mcu_status_recovered
+          mcu_estop / mcu_estop_clear
+          mcu_stale / mcu_stale_clear
+          mcu_mode_mismatch / mcu_mode_ok
+
+        getattr dipakai supaya runner tetap jalan dengan objek MCU apa
+        pun (stub tes, dry-run) — read_status hanya ada di McuLink.
+        """
+        if self.mcu.dry_run:
+            return
+        read_status = getattr(self.mcu, "read_status", None)
+        if read_status is None:
+            return
+
+        status = read_status()
+        now = time.monotonic()
+
+        if status is None:
+            # Tidak ada baris baru. MCU kirim 10 Hz; kalau sunyi lebih
+            # lama dari status_timeout_s setelah pernah terima, catat.
+            if (self._mcu_status_seen and self._mcu_status_at is not None
+                    and not self._mcu_status_lost
+                    and now - self._mcu_status_at > self.status_timeout_s):
+                self._mcu_status_lost = True
+                self.log.event("mcu_status_lost",
+                               silent_s=round(
+                                   now - self._mcu_status_at, 2))
+            return
+
+        self._mcu_status_at = now
+        if not self._mcu_status_seen:
+            self._mcu_status_seen = True
+            self.log.event("mcu_status_ready", mode=status.mode)
+        if self._mcu_status_lost:
+            self._mcu_status_lost = False
+            self.log.event("mcu_status_recovered")
+        if status.estop != self._mcu_estop:
+            self._mcu_estop = status.estop
+            self.log.event("mcu_estop" if status.estop else "mcu_estop_clear")
+        if status.stale != self._mcu_stale:
+            self._mcu_stale = status.stale
+            self.log.event("mcu_stale" if status.stale else "mcu_stale_clear")
+
+        # Mode firmware harus sama dengan motor_driver di config; kalau
+        # beda, robot.json dan firmware bicara dua bahasa berbeda.
+        expected = FIRMWARE_MODES.get(getattr(self.mcu, "driver", ""))
+        if expected is not None and status.mode != expected:
+            if not self._mcu_mode_mismatch:
+                self._mcu_mode_mismatch = True
+                self.log.event("mcu_mode_mismatch", expected=expected,
+                               actual=status.mode)
+        elif self._mcu_mode_mismatch:
+            self._mcu_mode_mismatch = False
+            self.log.event("mcu_mode_ok", mode=status.mode)
 
     def _check_overrun(self, elapsed_ms: float, now: float) -> None:
         budget_ms = self._period * 1000.0 if self._period > 0 else 0.0

@@ -31,3 +31,19 @@ class Observation(NamedTuple):
     curvature_inv_m: float | None = None
     confidence: float = 0.0
     detections: tuple[dict[str, Any], ...] = ()
+
+
+class McuStatus(NamedTuple):
+    """Status MCU yang dikirimkan ke Jetson (10 Hz, non-blocking).
+
+    Dibuat oleh parse_status_line() di protocol.py dari baris
+    `#v1,<mode>,<estop>,<stale>,<speed_out>,<steer_out>,<rx_ok>,<uptime_ms>`.
+    """
+
+    mode: str            # "esc1" | "hb1" | "skid4"
+    estop: bool          # True = tombol E-stop tertekan, penggerak dipotong
+    stale: bool          # True = watchdog MCU trip / belum ada setpoint segar
+    speed_out_mps: float # kecepatan yang benar-benar diterapkan (0 = dipotong)
+    steer_out_rad: float # sudut kemudi yang diterapkan (0 = dipotong)
+    rx_ok: int           # jumlah setpoint valid yang diterima MCU
+    uptime_ms: int       # millis() MCU saat baris dibuat

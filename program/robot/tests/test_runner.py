@@ -31,19 +31,56 @@ class StubCamera:
 
 
 class StubMcu:
-    """MCU palsu: rekam setiap perintah yang dikirim."""
+    """MCU palsu: rekam setiap perintah yang dikirim.
 
-    def __init__(self, dry_run=True):
+    `statuses` = antrian McuStatus yang "dikirim MCU"; read_status()
+    mengeluarkan satu per panggilan (None kalau antrian kosong), persis
+    seperti McuLink sungguhan.
+    """
+
+    def __init__(self, dry_run=True, driver="external_esc", statuses=None):
         self.dry_run = dry_run
+        self.driver = driver
         self.commands: list[Command] = []
+        self.statuses = list(statuses or [])
+        self.read_status_calls = 0
         self.alive = True
         self.serial = None
 
     def send(self, command: Command) -> None:
         self.commands.append(command)
 
+    def read_status(self):
+        self.read_status_calls += 1
+        return self.statuses.pop(0) if self.statuses else None
+
     def close(self) -> None:
         self.alive = False
+
+
+class DelayedStatusMcu(StubMcu):
+    """Status pertama langsung; sisanya baru keluar setelah `gap_s` detik.
+
+    Dipakai untuk menguji lost/recovered: tanpa jeda nyata, status
+    kedua akan terbaca sebelum timeout sempat tercatat.
+    """
+
+    def __init__(self, *args, gap_s=0.2, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.gap_s = gap_s
+        self._first_at = None
+
+    def read_status(self):
+        self.read_status_calls += 1
+        if not self.statuses:
+            return None
+        now = time.monotonic()
+        if self._first_at is None:
+            self._first_at = now
+            return self.statuses.pop(0)
+        if now - self._first_at >= self.gap_s:
+            return self.statuses.pop(0)
+        return None
 
 
 class StubTracker:
@@ -72,13 +109,14 @@ def log(tmp_path):
 
 
 def _runner(log, camera, tracker, mcu, *, loop_hz=60.0, timeout_s=1.0,
-            controller=None, detector=None):
+            controller=None, detector=None, status_timeout_s=2.0):
     from mizuro.controller import StanleyController
     return ClosedLoopRunner(
         camera=camera, tracker=tracker,
         controller=controller or StanleyController(),
         mcu=mcu, log=log, machine=StateMachine(), calib=StubCalib(),
-        loop_hz=loop_hz, run_timeout_s=timeout_s, detector=detector)
+        loop_hz=loop_hz, run_timeout_s=timeout_s, detector=detector,
+        status_timeout_s=status_timeout_s)
 
 
 def _obs(conf=0.9, lane=0.0, heading=0.0, curvature=None, t=0.0):
@@ -248,6 +286,132 @@ def test_telemetry_rows_written(log):
     assert len(rows) >= 6
     assert "confidence" in rows[0]
     assert "speed_mps" in rows[0]
+
+
+# --- status MCU (MCU -> Jetson) ----------------------------------------------
+
+def _status(mode="skid4", estop=False, stale=False, speed=0.0, steer=0.0,
+            rx_ok=1, uptime=0):
+    from mizuro.types import McuStatus
+    return McuStatus(mode, estop, stale, speed, steer, rx_ok, uptime)
+
+
+def test_dry_run_does_not_poll_status(log):
+    """dry_run: status tidak dibaca (tidak ada serial untuk dibaca)."""
+    cam = StubCamera()
+    mcu = StubMcu(dry_run=True, statuses=[_status()])
+    trk = StubTracker([_obs(t=0.0)])
+    r = _runner(log, cam, trk, mcu, loop_hz=1000.0, timeout_s=0.05)
+    r.run()
+    assert mcu.read_status_calls == 0
+    assert not any(e["event"].startswith("mcu_")
+                   for e in _read_events(log))
+
+
+def test_first_status_logs_ready_with_mode(log):
+    cam = StubCamera()
+    mcu = StubMcu(dry_run=False, driver="skid4_l298n",
+                  statuses=[_status(mode="skid4")])
+    trk = StubTracker([_obs(t=0.0)])
+    r = _runner(log, cam, trk, mcu, loop_hz=1000.0, timeout_s=0.05)
+    r.run()
+    events = _read_events(log)
+    ready = [e for e in events if e["event"] == "mcu_status_ready"]
+    assert len(ready) == 1          # sekali saja, bukan tiap iterasi
+    assert ready[0]["mode"] == "skid4"
+
+
+def test_estop_events_logged_on_change(log):
+    cam = StubCamera()
+    mcu = StubMcu(dry_run=False, driver="skid4_l298n", statuses=[
+        _status(estop=False),
+        _status(estop=True),    # tombol ditekan
+        _status(estop=True),    # tetap: tidak di-log ulang
+        _status(estop=False),   # dilepas
+    ])
+    trk = StubTracker([_obs(t=0.0)])
+    r = _runner(log, cam, trk, mcu, loop_hz=1000.0, timeout_s=0.05)
+    r.run()
+    events = [e["event"] for e in _read_events(log)]
+    assert events.count("mcu_estop") == 1
+    assert events.count("mcu_estop_clear") == 1
+
+
+def test_stale_events_logged_on_change(log):
+    cam = StubCamera()
+    mcu = StubMcu(dry_run=False, driver="skid4_l298n", statuses=[
+        _status(stale=False),
+        _status(stale=True),
+        _status(stale=False),
+    ])
+    trk = StubTracker([_obs(t=0.0)])
+    r = _runner(log, cam, trk, mcu, loop_hz=1000.0, timeout_s=0.05)
+    r.run()
+    events = [e["event"] for e in _read_events(log)]
+    assert events.count("mcu_stale") == 1
+    assert events.count("mcu_stale_clear") == 1
+
+
+def test_mode_mismatch_logged(log):
+    """robot.json bilang skid4 tapi firmware jalan esc1 -> dicatat."""
+    cam = StubCamera()
+    mcu = StubMcu(dry_run=False, driver="skid4_l298n", statuses=[
+        _status(mode="esc1"),
+        _status(mode="esc1"),   # tetap mismatch: tidak di-log ulang
+        _status(mode="skid4"),  # cocok lagi
+    ])
+    trk = StubTracker([_obs(t=0.0)])
+    r = _runner(log, cam, trk, mcu, loop_hz=1000.0, timeout_s=0.05)
+    r.run()
+    events = _read_events(log)
+    mismatch = [e for e in events if e["event"] == "mcu_mode_mismatch"]
+    assert len(mismatch) == 1
+    assert mismatch[0]["expected"] == "skid4"
+    assert mismatch[0]["actual"] == "esc1"
+    assert any(e["event"] == "mcu_mode_ok" and e["mode"] == "skid4"
+               for e in events)
+
+
+def test_status_lost_and_recovered(log):
+    """Status berhenti datang > status_timeout_s -> lost; datang lagi ->
+    recovered."""
+    cam = StubCamera()
+    mcu = StubMcu(dry_run=False, driver="skid4_l298n",
+                  statuses=[_status()])
+    trk = StubTracker([_obs(t=0.0)])
+    r = _runner(log, cam, trk, mcu, loop_hz=200.0, timeout_s=0.4,
+                status_timeout_s=0.05)
+    r.run()
+    events = [e["event"] for e in _read_events(log)]
+    assert "mcu_status_lost" in events
+    assert "mcu_status_recovered" not in events   # tidak ada status lagi
+
+
+def test_status_recovered_after_loss(log):
+    """Status harus BENAR-BENAR berhenti dulu (lost), baru datang lagi
+    (recovered) — stub menahan status kedua sampai jeda lewat."""
+    cam = StubCamera()
+    mcu = DelayedStatusMcu(dry_run=False, gap_s=0.2, driver="skid4_l298n",
+                           statuses=[_status(), _status()])
+    trk = StubTracker([_obs(t=0.0)])
+    r = _runner(log, cam, trk, mcu, loop_hz=100.0, timeout_s=0.6,
+                status_timeout_s=0.05)
+    r.run()
+    events = [e["event"] for e in _read_events(log)]
+    assert "mcu_status_ready" in events
+    assert "mcu_status_lost" in events
+    assert "mcu_status_recovered" in events
+
+
+def test_status_polling_does_not_block_heartbeat(log):
+    """Polling status gagal/None tidak menghentikan heartbeat."""
+    cam = StubCamera()
+    mcu = StubMcu(dry_run=False, driver="skid4_l298n")  # tanpa status
+    trk = StubTracker([_obs(t=0.0)])
+    r = _runner(log, cam, trk, mcu, loop_hz=1000.0, timeout_s=0.05)
+    r.run()
+    assert len(mcu.commands) >= 5
+    assert mcu.read_status_calls >= 5
 
 
 # --- pembantu -----------------------------------------------------------------
