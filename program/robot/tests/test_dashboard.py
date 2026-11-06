@@ -8,7 +8,7 @@ import csv
 import json
 import math
 import threading
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import pytest
 
@@ -280,6 +280,183 @@ def test_server_security_headers(server):
         assert headers.get("Cache-Control") == "no-store"
         assert headers.get("X-Content-Type-Options") == "nosniff"
         assert "default-src 'none'" in headers.get("Content-Security-Policy", "")
+
+
+# --- kontrol sumber kamera (main.py --bench) ------------------------------------------
+
+class FakeControl:
+    """Cermin minimal BenchControl buat tes HTTP (tanpa cv2/thread)."""
+
+    def __init__(self):
+        self.selected = None
+
+    def sources(self):
+        return {
+            "current": "video", "current_name": "uji.mp4",
+            "csi": {"available": False, "reason": "tanpa GStreamer"},
+            "videos": [{"name": "uji.mp4", "size_bytes": 1234}],
+            "videos_dir": "/tmp/uji", "video_loop": True,
+        }
+
+    def select(self, payload):
+        if not isinstance(payload, dict):
+            raise ValueError("payload harus objek JSON")
+        kind = payload.get("source")
+        if kind == "csi":
+            self.selected = payload
+            return {"available": True, "source": "csi", "frames": 0}
+        if kind == "video" and payload.get("name") == "uji.mp4":
+            self.selected = payload
+            return {"available": True, "source": "video", "frames": 7,
+                    "fps": 30.0}
+        raise ValueError(f"sumber tidak dikenal: {payload!r}")
+
+    def status(self):
+        return {"available": True, "source": "video", "frames": 7,
+                "fps": 30.0}
+
+
+def _post(base, path, body):
+    request = Request(f"{base}{path}", data=body,
+                      headers={"Content-Type": "application/json"},
+                      method="POST")
+    return urlopen(request)
+
+
+@pytest.fixture()
+def control_server(tmp_path):
+    _write_run(tmp_path, "run-20260101-120000", [_row(1.0)])
+    httpd = dashboard.make_server("127.0.0.1", 0, tmp_path,
+                                  control=FakeControl())
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{httpd.server_port}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join()
+
+
+def test_server_sources_lists_videos(control_server):
+    with urlopen(f"{control_server}/api/sources") as response:
+        sources = json.load(response)
+        assert sources["current"] == "video"
+        assert sources["videos"] == [{"name": "uji.mp4", "size_bytes": 1234}]
+        assert sources["csi"]["available"] is False
+        assert sources["videos_dir"] == "/tmp/uji"
+
+
+def test_server_status_includes_bench(control_server):
+    with urlopen(f"{control_server}/api/status") as response:
+        status = json.load(response)
+        # status log + status kamera hidup dalam satu payload
+        assert status["run"] == "run-20260101-120000"
+        assert status["bench"]["frames"] == 7
+        assert status["bench"]["fps"] == 30.0
+
+
+def test_server_post_source_switches(control_server):
+    with _post(control_server, "/api/source",
+               b'{"source": "video", "name": "uji.mp4"}') as response:
+        assert response.status == 200
+        assert json.load(response)["frames"] == 7
+    with _post(control_server, "/api/source", b'{"source": "csi"}') as response:
+        assert json.load(response)["source"] == "csi"
+
+
+def test_server_post_source_rejects_bad_payload(control_server):
+    for bad in (b'{"source": "video", "name": "../rahasia.mp4"}',
+                b'{"source": "sihir"}', b'{"source": "video"}',
+                b'bukan-json', b'', b'{"source": "video", "name": 5}'):
+        with pytest.raises(Exception) as excinfo:
+            _post(control_server, "/api/source", bad)
+        assert getattr(excinfo.value, "code", None) == 400
+
+
+def test_server_post_source_camera_failure_is_500(tmp_path):
+    """Sumber gagal dibuka = 500, bukan 400: permintaan sah, yang gagal
+    hardware/kamera. Pesan asal diteruskan ke UI."""
+    class FailingControl(FakeControl):
+        def select(self, payload):
+            raise RuntimeError("kamera gagal dibuka: proses lain masih "
+                               "memegang kamera CSI")
+
+    _write_run(tmp_path, "run-20260101-120000", [_row(1.0)])
+    httpd = dashboard.make_server("127.0.0.1", 0, tmp_path,
+                                  control=FailingControl())
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with pytest.raises(Exception) as excinfo:
+            _post(f"http://127.0.0.1:{httpd.server_port}", "/api/source",
+                  b'{"source": "csi"}')
+        error = excinfo.value
+        assert getattr(error, "code", None) == 500
+        # pesan asal ikut terkirim supaya UI bisa menampilkannya
+        assert "memegang kamera CSI" in error.read().decode("utf-8")
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join()
+
+
+def test_server_post_unknown_path_404(control_server):
+    with pytest.raises(Exception) as excinfo:
+        _post(control_server, "/api/tidak-ada", b'{"source": "csi"}')
+    assert getattr(excinfo.value, "code", None) == 404
+
+
+def test_server_page_has_bench_panel(control_server):
+    with urlopen(f"{control_server}/") as response:
+        page = response.read().decode("utf-8")
+        assert 'const BENCH = "1";' in page
+        assert 'id="benchPanel"' in page
+        assert 'id="videoSelect"' in page
+        assert 'id="applySource"' in page
+        assert "__BENCH__" not in page
+
+
+def test_server_without_control_has_no_bench(tmp_path):
+    _write_run(tmp_path, "run-20260101-120000", [_row(1.0)])
+    httpd = dashboard.make_server("127.0.0.1", 0, tmp_path)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urlopen(f"http://127.0.0.1:{httpd.server_port}/") as response:
+            page = response.read().decode("utf-8")
+            assert 'const BENCH = "";' in page
+            # panel ada di HTML tapi hidden — JS tidak pernah menghidupkannya
+            assert 'id="benchPanel" class="bench-panel" hidden' in page
+        with pytest.raises(Exception) as excinfo:
+            urlopen(f"http://127.0.0.1:{httpd.server_port}/api/sources")
+        assert getattr(excinfo.value, "code", None) == 404
+        with pytest.raises(Exception) as excinfo:
+            _post(f"http://127.0.0.1:{httpd.server_port}", "/api/source",
+                  b'{"source": "csi"}')
+        assert getattr(excinfo.value, "code", None) == 404
+        with urlopen(f"http://127.0.0.1:{httpd.server_port}/api/status"
+                     ) as response:
+            assert "bench" not in json.load(response)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join()
+
+
+def test_make_server_control_defaults_to_none(tmp_path):
+    """Signature backward-compatible: pemanggil lama tanpa control aman."""
+    httpd = dashboard.make_server("127.0.0.1", 0, tmp_path)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urlopen(f"http://127.0.0.1:{httpd.server_port}/api/demo"
+                     ) as response:
+            assert json.load(response)["demo"] is True
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join()
 
 
 # --- self-check -----------------------------------------------------------------------

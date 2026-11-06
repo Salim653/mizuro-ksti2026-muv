@@ -2,10 +2,14 @@
 
 Dua jebakan besar di Jetson:
 
-1. cv2 HARUS dari JetPack (`/usr/bin/python3`) — punya backend GStreamer.
-   cv2 pip (`opencv-python`, termasuk yang di `.venv` repo ini) TIDAK punya,
-   jadi `VideoCapture(CAP_GSTREAMER)` gagal dengan pesan membingungkan.
-   Konstruktor memeriksa build info dan melempar pesai eksplisit.
+1. cv2 HARUS dari JetPack (`/usr/bin/python3`) — di sana stack kamera CSI
+   (`nvarguscamerasrc` + nvargus-daemon) benar-benar jalan. Catatan:
+   wheel `opencv-python` di `.venv` repo ini MELAPORKAN `GStreamer: YES
+   (1.20.3)` dan bahkan membundel plugin nvstreamer, jadi pemeriksaan
+   build info di konstruktor TIDAK menangkapnya — yang gagal adalah
+   `read()` ("No cameras available") karena tidak ada kamera CSI
+   terpasang. Pemeriksaan build info hanya menangkap build yang
+   sungguh-sungguh tanpa backend GStreamer.
 2. Hanya SATU proses boleh memegang kamera CSI. `--stream-only` ada untuk
    debug; kalau pipeline tidak terbuka, penyebab paling sering adalah
    proses lain (dashboard/stream lama) masih pegang kamera.
@@ -20,10 +24,14 @@ config) — beda dari sumber CSI yang ukurannya DITOLAK.
 
 `opener` bisa disuntikkan untuk tes: fungsi () -> objek bergaya cv2.VideoCapture
 dengan `isOpened()`, `read()`, `release()`. Tanpa suntikan, cv2 asli dipakai.
+
+`CameraSource` membungkus `Camera` dengan penukar sumber saat runtime
+(CSI <-> video) untuk dashboard bench — lihat `mizuro/bench_server.py`.
 """
 from __future__ import annotations
 
 import sys
+import threading
 
 
 class EndOfVideo(RuntimeError):
@@ -200,3 +208,103 @@ class Camera:
         return cls(config.camera_pipeline, config.image_width,
                    config.image_height, opener=opener, undistort=undistort,
                    video_loop=video_loop)
+
+
+class CameraSource:
+    """Penukar sumber kamera SAAT RUNTIME (CSI <-> file video).
+
+    Dipakai dashboard bench (`main.py --bench`): operator menukar sumber
+    dari browser tanpa restart proses. Sumber baru dibuka DULU dan baru
+    menggantikan yang lama kalau berhasil — kegagalan buka (file hilang,
+    kamera dipakai proses lain) tidak pernah meninggalkan keadaan
+    "setengah tukar": sumber lama tetap jalan.
+
+    Thread-safe dengan kontrak khusus: satu thread loop kamera memanggil
+    `read()`, thread HTTP memanggil `select()`. Lock dipegang SELAMA
+    pembacaan frame supaya kamera tidak di-`release()` tepat saat
+    `read()` berjalan di thread lain — cv2 tidak menjamin aman untuk
+    itu, dan release di tengah read adalah cara tercepat mendapatkan
+    segfault. Konsekuensinya: `select()` menunggu frame yang sedang
+    dibaca selesai (beberapa ms), tidak pernah sebaliknya.
+    """
+
+    def __init__(self, width: int, height: int, *, opener=None,
+                 undistort=None, video_loop: bool = False) -> None:
+        self.width, self.height = width, height
+        self._opener = opener
+        self._undistort = undistort
+        self.video_loop = video_loop
+        self._camera: Camera | None = None
+        self._lock = threading.Lock()
+        self.switches = 0
+
+    @property
+    def camera(self) -> Camera | None:
+        """Kamera aktif (None = belum ada / sudah ditutup)."""
+        with self._lock:
+            return self._camera
+
+    @property
+    def pipeline(self) -> str:
+        cam = self.camera
+        return cam.pipeline if cam is not None else ""
+
+    @property
+    def is_file(self) -> bool:
+        cam = self.camera
+        return bool(cam is not None and cam.is_file)
+
+    @property
+    def source_fps(self) -> float:
+        cam = self.camera
+        return cam.source_fps if cam is not None else 0.0
+
+    def select(self, pipeline: str) -> Camera:
+        """Tukar ke `pipeline`; return kamera yang baru.
+
+        Melempar (RuntimeError dari Camera) kalau sumber gagal dibuka —
+        sumber lama TETAP aktif. `pipeline` kosong = CSI bawaan.
+        """
+        # Buka dulu di LUAR lock: kamera lama tetap bisa melayani
+        # read() selama pembukaan (yang bisa lambat) berjalan.
+        camera = Camera(pipeline, self.width, self.height,
+                        opener=self._opener, undistort=self._undistort,
+                        video_loop=self.video_loop)
+        with self._lock:
+            old, self._camera = self._camera, camera
+            self.switches += 1
+        if old is not None:
+            # Aman: tidak ada read() yang bisa menyentuh `old` lagi —
+            # pertukaran tadi terjadi di bawah lock yang sama dengan
+            # lock yang dipegang read().
+            old.close()
+        return camera
+
+    def read(self):
+        """Satu frame BGR dari sumber aktif. Melempar kalau gagal."""
+        with self._lock:
+            if self._camera is None:
+                raise RuntimeError("belum ada sumber kamera dipilih")
+            return self._camera.read()
+
+    def close(self) -> None:
+        with self._lock:
+            camera, self._camera = self._camera, None
+        if camera is not None:
+            camera.close()
+
+    def describe(self) -> dict:
+        """Ringkasan sumber aktif buat status dashboard (tanpa lock lama)."""
+        cam = self.camera
+        if cam is None:
+            return {"source": "none", "pipeline": "", "is_file": False,
+                    "source_fps": 0.0}
+        return {"source": "video" if cam.is_file else "csi",
+                "pipeline": cam.pipeline, "is_file": cam.is_file,
+                "source_fps": cam.source_fps}
+
+    def __enter__(self) -> "CameraSource":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()

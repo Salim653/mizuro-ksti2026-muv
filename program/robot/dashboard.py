@@ -22,6 +22,15 @@ menyentuh Python. Endpoint JSON:
     /api/runs      daftar run yang ada di direktori log
     /api/history   deret waktu buat grafik (?run=&points=)
     /api/demo      data sintetis buat preview UI tanpa robot
+
+Kalau `control` disuntikkan (dari `main.py --bench`), tiga hal bertambah:
+
+    /api/sources   daftar sumber kamera (CSI + video di direktori)
+    /api/source    POST — tukar sumber kamera saat runtime
+    /api/status    key tambahan `bench` = status kamera hidup
+
+Tanpa `control` (mis. `dashboard.py` jalan sendiri) endpoint kontrol
+tidak ada dan server tetap read-only seperti sebelumnya.
 """
 from __future__ import annotations
 
@@ -39,7 +48,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from mizuro.telemetry import FIELDS
 
@@ -55,6 +64,7 @@ EVENT_NAMES = {
 }
 FRESH_S = 3.0          # log dianggap hidup kalau mtime < 3 detik
 HISTORY_POINTS = 240   # default titik grafik (downsample)
+MAX_BODY_BYTES = 4096  # batas body POST /api/source (payload kecil)
 
 
 def number(value: Any) -> float | None:
@@ -265,13 +275,21 @@ def _js_string(value: str) -> str:
 
 
 def make_server(host: str, port: int, runs_dir: Path,
-                feed_url: str = "") -> ThreadingHTTPServer:
+                feed_url: str = "", control: Any = None
+                ) -> ThreadingHTTPServer:
     """Server dashboard. `feed_url` (opsional) di-inject ke halaman:
 
     kalau main.py dijalankan dengan `--dashboard`, URL MJPEG dari mode
     tersebut dikirim ke sini sehingga panel kamera langsung terisi —
     operator tidak perlu ketik manual. Kosong = placeholder dibiarkan
     kosong, operator isi sendiri.
+
+    `control` (opsional) = objek `BenchControl` dari `main.py --bench`.
+    Kalau ada, server menambah endpoint kontrol sumber kamera
+    (`GET /api/sources`, `POST /api/source`) dan menyertakan status
+    kamera hidup di `/api/status` (key `bench`); halaman diberi tanda
+    lewat token `__BENCH__` supaya panel kontrol muncul. Tanpa
+    `control`, server tetap read-only — endpoint kontrol tidak ada.
     """
     page = PAGE.read_bytes()
     token = b"__FEED_URL__"
@@ -279,6 +297,7 @@ def make_server(host: str, port: int, runs_dir: Path,
         page = page.replace(token, _js_string(feed_url).encode("utf-8"))
     else:
         page = page.replace(token, b"")
+    page = page.replace(b"__BENCH__", b"1" if control is not None else b"")
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -289,7 +308,12 @@ def make_server(host: str, port: int, runs_dir: Path,
                     self._reply(200, "text/html; charset=utf-8", page)
                 elif parsed.path == "/api/status":
                     run = query.get("run", [None])[0]
-                    self._json(latest_status(runs_dir, run))
+                    payload = latest_status(runs_dir, run)
+                    if control is not None:
+                        # status kamera hidup ikut dalam tick yang sama —
+                        # UI tidak perlu poll endpoint kedua tiap 1.5 s
+                        payload["bench"] = control.status()
+                    self._json(payload)
                 elif parsed.path == "/api/runs":
                     self._json({"runs": list_runs(runs_dir)})
                 elif parsed.path == "/api/history":
@@ -298,6 +322,12 @@ def make_server(host: str, port: int, runs_dir: Path,
                     self._json(run_history(runs_dir, run, points))
                 elif parsed.path == "/api/demo":
                     self._json(demo_status())
+                elif parsed.path == "/api/sources":
+                    if control is None:
+                        self._reply(404, "text/plain; charset=utf-8",
+                                    b"tidak ditemukan")
+                    else:
+                        self._json(control.sources())
                 else:
                     self._reply(404, "text/plain; charset=utf-8",
                                 b"tidak ditemukan")
@@ -307,6 +337,39 @@ def make_server(host: str, port: int, runs_dir: Path,
             except (OSError, csv.Error, UnicodeError) as exc:
                 self._json({"error": f"tidak bisa membaca log: "
                                      f"{type(exc).__name__}"}, status=500)
+
+        def do_POST(self) -> None:
+            # Satu-satunya endpoint tulis: tukar sumber kamera. Hanya
+            # ada kalau `control` disuntikkan (main.py --bench); tanpa
+            # itu server benar-benar read-only.
+            parsed = urlparse(self.path)
+            if parsed.path != "/api/source" or control is None:
+                self._reply(404, "text/plain; charset=utf-8",
+                            b"tidak ditemukan")
+                return
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = 0
+            if length <= 0 or length > MAX_BODY_BYTES:
+                self._json({"error": "body kosong atau terlalu besar"},
+                           status=400)
+                return
+            try:
+                payload = json.loads(
+                    self.rfile.read(length).decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                self._json({"error": "body bukan JSON valid"}, status=400)
+                return
+            try:
+                self._json(control.select(payload))
+            except ValueError as exc:
+                # permintaan tidak sah (nama video ngawur / traversal)
+                self._json({"error": str(exc)}, status=400)
+            except RuntimeError as exc:
+                # sumber gagal dibuka (file rusak, kamera dipakai proses
+                # lain) — sumber lama tetap aktif, pesan dikirim ke UI
+                self._json({"error": str(exc)}, status=500)
 
         def _json(self, payload: dict[str, Any], status: int = 200) -> None:
             body = json.dumps(payload).encode("utf-8")
@@ -332,6 +395,39 @@ def make_server(host: str, port: int, runs_dir: Path,
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
     return server
+
+
+class _FakeControl:
+    """Cermin minimal `BenchControl` buat self-check (tanpa cv2).
+
+    Sengaja TIDAK mengimpor `mizuro.bench_server`: self-check dashboard
+    harus tetap stdlib-only supaya jalan dengan /usr/bin/python3 di
+    Jetson apa adanya. Kontrol asli diuji di tests/test_bench_server.py.
+    """
+
+    def sources(self) -> dict[str, Any]:
+        return {
+            "current": "video", "current_name": "uji.mp4",
+            "csi": {"available": False,
+                    "reason": "cv2 tanpa backend GStreamer"},
+            "videos": [{"name": "uji.mp4", "size_bytes": 1234}],
+            "videos_dir": "/tmp/uji", "video_loop": True,
+        }
+
+    def select(self, payload: Any) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("payload harus objek JSON")
+        kind = payload.get("source")
+        if kind == "csi":
+            return {"available": True, "source": "csi", "frames": 0}
+        if kind == "video" and payload.get("name") == "uji.mp4":
+            return {"available": True, "source": "video", "frames": 7,
+                    "fps": 30.0}
+        raise ValueError(f"sumber tidak dikenal: {payload!r}")
+
+    def status(self) -> dict[str, Any]:
+        return {"available": True, "source": "video", "frames": 7,
+                "fps": 30.0, "lane_error_m": 0.01, "confidence": 0.9}
 
 
 def self_check() -> None:
@@ -471,6 +567,100 @@ def self_check() -> None:
                 assert getattr(exc, "code", None) == 404
             else:
                 raise AssertionError("path tidak dikenal dilayani")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+        # --- kontrol sumber kamera (main.py --bench) -------------------------
+        control = _FakeControl()
+        server = make_server("127.0.0.1", 0, root, control=control)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with urlopen(f"http://127.0.0.1:{server.server_port}/") as response:
+                page = response.read()
+                assert response.status == 200
+                # panel kontrol sumber ada + token tanda bench bersih
+                assert b'id="benchPanel"' in page and b'id="videoSelect"' in page
+                assert b'const BENCH = "1";' in page
+                assert b"__BENCH__" not in page
+            with urlopen(f"http://127.0.0.1:{server.server_port}/api/sources"
+                         ) as response:
+                sources = json.load(response)
+                assert sources["current"] == "video"
+                assert sources["videos"] == [
+                    {"name": "uji.mp4", "size_bytes": 1234}]
+                assert sources["csi"]["available"] is False
+            with urlopen(f"http://127.0.0.1:{server.server_port}/api/status"
+                         ) as response:
+                served = json.load(response)
+                # status log + status kamera hidup dalam satu payload
+                assert served["run"] == log.path.name
+                assert served["bench"]["frames"] == 7
+                assert served["bench"]["fps"] == 30.0
+
+            def post(path: str, body: bytes):
+                request = Request(
+                    f"http://127.0.0.1:{server.server_port}{path}", data=body,
+                    headers={"Content-Type": "application/json"},
+                    method="POST")
+                return urlopen(request)
+
+            with post("/api/source",
+                      b'{"source": "video", "name": "uji.mp4"}') as response:
+                assert response.status == 200
+                assert json.load(response)["frames"] == 7
+            with post("/api/source", b'{"source": "csi"}') as response:
+                assert json.load(response)["source"] == "csi"
+            for bad in (b'{"source": "video", "name": "../rahasia.mp4"}',
+                        b'{"source": "sihir"}', b'{"source": "video"}',
+                        b'bukan-json', b''):
+                try:
+                    post("/api/source", bad)
+                except Exception as exc:
+                    assert getattr(exc, "code", None) == 400
+                else:
+                    raise AssertionError(f"payload ditolak gagal: {bad!r}")
+            try:
+                post("/api/tidak-ada", b'{"source": "csi"}')
+            except Exception as exc:
+                assert getattr(exc, "code", None) == 404
+            else:
+                raise AssertionError("POST ke path tidak dikenal dilayani")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+        # tanpa control: endpoint kontrol tidak ada, halaman tanpa panel
+        server = make_server("127.0.0.1", 0, root)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with urlopen(f"http://127.0.0.1:{server.server_port}/") as response:
+                page = response.read()
+                assert b'const BENCH = "";' in page
+                # panel tetap ada di HTML tapi harus hidden — tanpa tanda
+                # bench, JS tidak pernah menghidupkannya
+                assert b'id="benchPanel" class="bench-panel" hidden' in page
+            try:
+                urlopen(f"http://127.0.0.1:{server.server_port}/api/sources")
+            except Exception as exc:
+                assert getattr(exc, "code", None) == 404
+            else:
+                raise AssertionError("/api/sources dilayani tanpa control")
+            try:
+                urlopen(Request(
+                    f"http://127.0.0.1:{server.server_port}/api/source",
+                    data=b'{"source": "csi"}', method="POST"))
+            except Exception as exc:
+                assert getattr(exc, "code", None) == 404
+            else:
+                raise AssertionError("POST /api/source dilayani tanpa control")
+            with urlopen(f"http://127.0.0.1:{server.server_port}/api/status"
+                         ) as response:
+                assert "bench" not in json.load(response)
         finally:
             server.shutdown()
             server.server_close()

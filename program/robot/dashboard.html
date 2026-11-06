@@ -71,6 +71,29 @@
   .feed-setting { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line); }
   .feed-setting input { flex: 1 1 240px; min-width: 0; }
 
+  .bench-panel { margin: 18px 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+  .bench-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 14px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .bench-head h2 { margin: 0; font-size: 1.05rem; }
+  .bench-state { margin: 0; color: var(--muted); font-size: .88rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .bench-state[data-kind="good"] { color: var(--good); }
+  .bench-state[data-kind="warn"] { color: var(--warn); }
+  .bench-state[data-kind="error"] { color: var(--bad); }
+  .bench-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; padding: 12px 14px 4px; }
+  .bench-toggle { display: flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .bench-toggle button { min-height: 40px; border: 0; border-radius: 0; background: var(--surface-2); color: var(--muted); }
+  .bench-toggle button + button { border-left: 1px solid var(--line); }
+  .bench-toggle button[aria-checked="true"] { background: var(--accent); color: #06121b; font-weight: 600; }
+  .bench-toggle button:disabled { opacity: .45; cursor: not-allowed; }
+  .bench-toggle button:disabled:hover { border-color: var(--line); }
+  .bench-controls select { flex: 1 1 220px; min-width: 0; }
+  .bench-controls select:disabled { opacity: .5; }
+  .bench-hint { margin: 0; padding: 0 14px 12px; color: var(--muted); font-size: .84rem; line-height: 1.5; overflow-wrap: anywhere; }
+  .bench-readout { display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 1px; margin: 0; padding: 0; border-top: 1px solid var(--line); background: var(--line); }
+  .bench-readout > div { min-width: 0; padding: 10px 12px; background: var(--surface); }
+  .bench-readout dt { color: var(--muted); font-size: .78rem; line-height: 1.3; }
+  .bench-readout dd { margin: 4px 0 0; font-variant-numeric: tabular-nums; font-size: 1.05rem; font-weight: 650; overflow-wrap: anywhere; }
+  .bench-readout dd small { font-size: .72rem; font-weight: 400; color: var(--muted); }
+
   .instrument { display: grid; gap: 16px; margin-top: 16px; }
   .primary-readout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, .65fr); gap: 18px; align-items: center; padding: clamp(16px, 3vw, 26px); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
   .primary-readout .label { margin: 0; color: var(--muted); font-size: .9rem; }
@@ -146,6 +169,31 @@
   </header>
 
   <p class="notice"><strong>Bench / pit saja.</strong> Matikan dashboard ini sebelum percobaan lomba — aturan melarang komunikasi dengan robot selama run. Halaman ini read-only dan tidak menggerakkan apa pun.</p>
+  <p class="notice" id="benchNotice" hidden><strong>Mode bench aktif.</strong> Panel sumber kamera menukar kamera CSI ↔ file video saat runtime. Serial dan motor <em>tidak pernah</em> disentuh dari halaman ini — roda fisik tidak bisa menyala dari sini. Tetap matikan sebelum percobaan lomba.</p>
+
+  <section id="benchPanel" class="bench-panel" hidden aria-label="Kontrol sumber kamera">
+    <div class="bench-head">
+      <h2>Sumber kamera</h2>
+      <p id="benchState" class="bench-state" role="status" aria-live="polite">Memuat daftar sumber…</p>
+    </div>
+    <div class="bench-controls">
+      <div class="bench-toggle" role="radiogroup" aria-label="Jenis sumber kamera">
+        <button id="srcCsi" type="button" role="radio" aria-checked="false">Kamera CSI</button>
+        <button id="srcVideo" type="button" role="radio" aria-checked="false">Video</button>
+      </div>
+      <select id="videoSelect" aria-label="Pilih file video" disabled></select>
+      <button id="applySource" type="button">Terapkan</button>
+    </div>
+    <p id="benchHint" class="bench-hint"></p>
+    <dl id="benchReadout" class="bench-readout">
+      <div><dt>FPS</dt><dd id="benchFps">—</dd></div>
+      <div><dt>Frame</dt><dd id="benchFrames">—</dd></div>
+      <div><dt>Error lateral</dt><dd id="benchLat">—<small> mm</small></dd></div>
+      <div><dt>Error heading</dt><dd id="benchHead">—<small> °</small></dd></div>
+      <div><dt>Confidence</dt><dd id="benchConf">—</dd></div>
+      <div><dt>Stasiun</dt><dd id="benchStations">—</dd></div>
+    </dl>
+  </section>
 
   <section id="loading" class="message" aria-live="polite" hidden><h2>Membaca log run…</h2><p>Menunggu file log dari Jetson.</p></section>
   <section id="empty" class="message" hidden><h2>Tidak ada log run</h2><p id="emptyText">Jalankan runtime robot atau arahkan dashboard ke direktori output yang benar (<code>--runs</code>).</p></section>
@@ -219,7 +267,7 @@
     </div>
   </div>
 
-  <footer>Tampilan read-only log runtime (<code>runs/run-*/telemetry.csv</code> + <code>events.jsonl</code>) dengan preview kamera MJPEG opsional. Nilai yang hilang berarti runtime belum menghasilkan pengukuran itu. Feedback MCU, input start fisik, dan status E-stop TIDAK tersedia di dashboard ini.</footer>
+  <footer>Tampilan read-only log runtime (<code>runs/run-*/telemetry.csv</code> + <code>events.jsonl</code>) dengan preview kamera MJPEG opsional. Di mode bench (<code>main.py --bench</code>) halaman juga bisa menukar sumber kamera CSI ↔ video; serial dan motor tidak pernah disentuh. Nilai yang hilang berarti runtime belum menghasilkan pengukuran itu. Feedback MCU, input start fisik, dan status E-stop TIDAK tersedia di dashboard ini.</footer>
 </main>
 
 <script>
@@ -323,9 +371,166 @@
     byId("videoFrame").replaceChildren(emptyFeed(message));
   }
 
+  // --- kontrol sumber kamera (mode bench) ------------------------------------
+  // BENCH diganti server: "1" kalau proses dimulai dengan `main.py --bench`
+  // (endpoint kontrol ada), "" kalau dashboard.py jalan sendiri (read-only).
+  const BENCH = "__BENCH__";
+  const benchPanel = byId("benchPanel");
+  let benchSources = null;
+  let benchBusy = false;
+  let benchWasLive = false;
+
+  function setBenchState(text, kind = "") {
+    const node = byId("benchState");
+    node.textContent = text;
+    node.dataset.kind = kind;
+  }
+
+  if (BENCH) {
+    benchPanel.hidden = false;
+    byId("benchNotice").hidden = false;
+    refreshSources();
+  }
+
+  async function refreshSources() {
+    try {
+      benchSources = await api("/api/sources");
+      renderSources(benchSources);
+    } catch (error) {
+      setBenchState("Daftar sumber gagal dimuat — server mungkin bukan mode bench.", "error");
+    }
+  }
+
+  function renderSources(sources) {
+    const csi = sources.csi || {};
+    const csiButton = byId("srcCsi");
+    csiButton.disabled = !csi.available;
+    csiButton.title = csi.reason || "";
+
+    const select = byId("videoSelect");
+    const videos = sources.videos || [];
+    select.replaceChildren();
+    if (videos.length === 0) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = `tidak ada video di ${sources.videos_dir || "?"}`;
+      select.append(option);
+      select.disabled = true;
+    } else {
+      select.disabled = false;
+      for (const item of videos) {
+        const option = document.createElement("option");
+        option.value = item.name;
+        option.textContent = `${item.name} · ${(item.size_bytes / 1e6).toFixed(1)} MB`;
+        select.append(option);
+      }
+    }
+    // sumber aktif bisa di luar direktori daftar (mis. --video path lain):
+    // tambahkan opsi khusus supaya dropdown tetap menunjukkan yang dipakai
+    if (sources.current === "video" && sources.current_name &&
+        !videos.some(item => item.name === sources.current_name)) {
+      const option = document.createElement("option");
+      option.value = sources.current_name;
+      option.textContent = `${sources.current_name} · (aktif)`;
+      select.append(option);
+    }
+
+    byId("srcCsi").setAttribute("aria-checked", String(sources.current === "csi"));
+    byId("srcVideo").setAttribute("aria-checked", String(sources.current === "video"));
+    select.value = sources.current_name || (select.options[0] ? select.options[0].value : "");
+    byId("benchHint").textContent = videos.length
+      ? `Direktori video: ${sources.videos_dir}${sources.video_loop ? " · putar ulang otomatis saat habis" : ""}`
+      : `Tidak ada file video di ${sources.videos_dir || "?"}. Taruh rekaman di sana, atau jalankan dengan --videos PATH.`;
+  }
+
+  async function applySource() {
+    if (benchBusy) return;
+    const useVideo = byId("srcVideo").getAttribute("aria-checked") === "true";
+    const payload = useVideo
+      ? { source: "video", name: byId("videoSelect").value }
+      : { source: "csi" };
+    if (useVideo && !payload.name) {
+      setBenchState("Pilih file video dulu (dropdown kosong).", "warn");
+      return;
+    }
+    benchBusy = true;
+    byId("applySource").disabled = true;
+    try {
+      const response = await fetch("/api/source", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setBenchState(data.error || `Gagal menukar sumber (HTTP ${response.status}).`, "error");
+      } else {
+        setBenchState("Sumber diganti — menunggu frame…", "good");
+        renderBench(data);
+        refreshSources();
+      }
+    } catch (error) {
+      setBenchState(`Permintaan gagal: ${error.message}`, "error");
+    } finally {
+      benchBusy = false;
+      byId("applySource").disabled = false;
+    }
+  }
+
+  function renderBench(bench) {
+    if (!bench) return;
+    benchWasLive = true;
+    const source = bench.source === "video" ? "VIDEO"
+      : bench.source === "csi" ? "KAMERA CSI" : "TANPA SUMBER";
+    if (bench.error) {
+      setBenchState(`${source} · ${bench.error}`, "error");
+    } else if (bench.ended) {
+      setBenchState(`${source} · video selesai — pilih video lain atau nyalakan putar ulang`, "warn");
+    } else if (!bench.available) {
+      setBenchState(`${source} · menunggu frame…`, "warn");
+    } else {
+      const name = bench.pipeline && bench.is_file ? ` · ${bench.pipeline.split("/").pop()}` : "";
+      setBenchState(`${source}${name} · ${fixed(bench.fps, 1)} fps · ${bench.frames} frame`, "good");
+    }
+    byId("benchFps").textContent = bench.available ? fixed(bench.fps, 1) : "—";
+    byId("benchFrames").textContent = bench.frames ?? "—";
+    byId("benchLat").innerHTML = Number.isFinite(bench.lane_error_m)
+      ? `${fixed(bench.lane_error_m * 1000, 0)}<small> mm</small>` : "—";
+    byId("benchHead").innerHTML = Number.isFinite(bench.heading_error_rad)
+      ? `${fixed(bench.heading_error_rad * 180 / Math.PI, 1)}<small> °</small>` : "—";
+    byId("benchConf").textContent = Number.isFinite(bench.confidence)
+      ? `${Math.round(bench.confidence * 100)}%` : "—";
+    byId("benchStations").textContent = bench.stations || "—";
+  }
+
+  function checkBenchGone(data) {
+    // server di-restart tanpa --bench: panel kontrol tidak berlaku lagi
+    if (benchWasLive && BENCH && !data.bench) {
+      benchWasLive = false;
+      benchPanel.hidden = true;
+      setBenchState("Kontrol sumber tidak aktif di server ini.", "error");
+    }
+  }
+
+  byId("srcCsi").addEventListener("click", () => {
+    byId("srcCsi").setAttribute("aria-checked", "true");
+    byId("srcVideo").setAttribute("aria-checked", "false");
+  });
+  byId("srcVideo").addEventListener("click", () => {
+    byId("srcVideo").setAttribute("aria-checked", "true");
+    byId("srcCsi").setAttribute("aria-checked", "false");
+  });
+  byId("applySource").addEventListener("click", applySource);
+
   // --- render status ---------------------------------------------------------
   function render(data) {
     byId("demoBadge").hidden = !data.demo;
+    // Panel sumber kamera hidup walau belum ada log run sama sekali —
+    // bench dengan video saja tidak menulis telemetry.
+    if (BENCH) {
+      if (data.bench) renderBench(data.bench);
+      else checkBenchGone(data);
+    }
     if (!data.available) {
       show("empty");
       byId("connection").dataset.kind = "offline";

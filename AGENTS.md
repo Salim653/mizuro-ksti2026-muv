@@ -14,7 +14,9 @@ All repository documents are written in Indonesian. Follow that convention. The 
 
 ## Code map: which files are canonical
 
-- `program/robot/`: **the canonical Python robot runtime** (package `mizuro`). Entry point is `main.py`, with flags `--self-check`, `--stream-only`, `--closed-loop`, and `--config PATH`. Dashboard: `dashboard.py` + `dashboard.html` (HTML terpisah supaya bisa diedit tim). Bench tanpa hardware: `tools/mcu_bench.py` (video sebagai kamera + `tools/virtual_mcu.py` = cermin pemetaan output firmware; roda fisik tidak bisa menyala dari sana). All new work happens here.
+- `program/robot/`: **the canonical Python robot runtime** (package `mizuro`). Entry point is `main.py`, with flags `--self-check`, `--stream-only`, `--closed-loop`, `--bench`, and `--config PATH`. Dashboard: `dashboard.py` + `dashboard.html` (HTML terpisah supaya bisa diedit tim). Bench tanpa hardware: `tools/mcu_bench.py` (video sebagai kamera + `tools/virtual_mcu.py` = cermin pemetaan output firmware; roda fisik tidak bisa menyala dari sana). All new work happens here.
+  - `mizuro/camera.py`: CSI/GStreamer + file video; `CameraSource` = sumber yang bisa ditukar saat runtime.
+  - `mizuro/bench_server.py`: `BenchControl` — loop kamera + tracker di thread dengan kontrol sumber (`GET /api/sources`, `POST /api/source`); tidak pernah menyentuh serial/motor.
 - `program/jetson/`: OLD English scaffold — reference only, NOT canonical. It predates the `mizuro` package, the closed-loop runner, and the checkpoint detector; its flat imports (`from camera import ...`) and `StartGate` do not exist in the canonical runtime. Do not copy code or protocol from it without checking `program/robot/` first. Its `dashboard.py`/`dashboard.html` were ported into `program/robot/`.
 - `program/robot-fw/`: an old English scaffold copy. Its files overlap with `robot/` and are NOT guaranteed to be in sync. `requirements.txt` and `requirements-jetson.txt` exist only here.
 - `program/body-mcu/body_controller.ino`: MCU firmware for Arduino-compatible boards (v2: tiga mode output runtime-selectable `skid4`/`esc1`/`hb1`, parser ketat, watchdog 100 ms, e-stop active-low, baris status `#v1,...` 10 Hz). The Uno is only for syntax checking. The real target is the STM32F401/F411 Blackpill, per `docs/project-notes/`. Tes tanpa hardware: `program/body-mcu/test/run_tests.sh` (g++ + mock `Arduino.h`/`Servo.h`). Pin map dan parameter skid masih placeholder — lihat `program/body-mcu/README.md`.
@@ -44,9 +46,16 @@ cd program/robot
 ../../.venv/bin/python tools/mcu_bench.py --video ../../recordings/capture_001.mp4 --duration 30
 ```
 
+Bench dashboard (kamera CSI/video ditukar dari browser, tanpa serial/motor):
+
+```sh
+cd program/robot
+../../.venv/bin/python main.py --bench --video ../../recordings/capture_001.mp4 --bench-duration 30
+```
+
 ## Interpreter and camera (Jetson): the biggest pitfalls
 
-- The runtime MUST use `/usr/bin/python3`. It has the JetPack OpenCV build with GStreamer. The repo's `.venv` uses the pip `opencv-python` package, which has NO GStreamer, so `mizuro/camera.py` fails with an explicit error message. Never run `pip install opencv-python` on the Jetson. `requirements-jetson.txt` explains why.
+- The runtime MUST use `/usr/bin/python3` on the Jetson. It has the JetPack OpenCV build, and the CSI camera stack (`nvarguscamerasrc` + nvargus-daemon) only works there. The repo's `.venv` uses the pip `opencv-python` wheel, which reports `GStreamer: YES (1.20.3)` and even bundles the nvstreamer plugins — so `mizuro/camera.py` does NOT fail at the GStreamer check there. What fails is `read()`: with no CSI camera attached, the pipeline opens and then errors with "No cameras available" → `RuntimeError: pembacaan frame kamera gagal`. Never run `pip install opencv-python` on the Jetson. `requirements-jetson.txt` explains why.
 - To check the backend, run `python3 -c "import cv2; print(cv2.getBuildInformation())"`. The output must include `GStreamer: YES`.
 - Only ONE process may hold the CSI camera at a time. `--stream-only` opens the camera without arming the robot. The endpoints `/`, `/stream`, and `/snapshot` are served on `stream_host:stream_port` (default `127.0.0.1:8080`).
 - `mizuro/camera.py` rejects any frame whose size differs from `image_width` and `image_height` in the config.
@@ -65,6 +74,7 @@ The canonical runtime is FURTHER along than the old `program/jetson/` scaffold �
 
 - Lane keeping is classical CV (`mizuro/perception/classical.py`): Otsu → stations → robust quadratic fit. Synthetic ground-truth eval: median lateral error 0.73 mm, heading 0.11°.
 - Control is Stanley (`mizuro/controller.py`); the closed-loop runner (`mizuro/runner.py`, `main.py --closed-loop`) wires perception → Stanley → MCU with `dry_run` default true — the full loop runs and logs, serial is never touched.
+- Bench dashboard (`main.py --bench`, `mizuro/bench_server.py`): dashboard + kontrol sumber kamera (toggle CSI ↔ video + pemilih file) yang ditukar saat runtime tanpa restart proses. Tidak ada serial dan tidak ada motor di jalur ini — `dry_run` dipaksa true di `run_bench()`, dan `McuLink` tidak pernah dibuat.
 - Checkpoint detection is selectable via `checkpoint_mode`: `none` (default) | `cv` (classical color/shape) | `model` (YOLO ONNX via cv2.dnn). The detector never controls the robot; results are logged only.
 - What is NOT done yet: validation with the real camera on the floor, MCU status protocol (MCU → Jetson feedback), checkpoint spec/dataset from the Technical Meeting, and any wheels-up bench with motors.
 
@@ -74,6 +84,7 @@ The canonical runtime is FURTHER along than the old `program/jetson/` scaffold �
 - During a competition attempt there must be NO communication. Stop the stream, dashboard, and all HTTP servers before each attempt.
 - `dashboard.py --host 0.0.0.0` (in `program/robot/`) is only for trusted pit networks. It has no authentication.
 - `main.py --dashboard` starts the dashboard in a daemon thread next to `--stream-only`/`--closed-loop`. It is OFF by default and stops cleanly when the mode ends; still, kill every HTTP server before a competition attempt.
+- `main.py --bench` serves MJPEG (`:8080`) plus the dashboard (`:18765`) with camera-source control. It never opens serial and never creates `McuLink`, but both HTTP servers still have to be stopped before a competition attempt.
 
 ## Git and working tree
 

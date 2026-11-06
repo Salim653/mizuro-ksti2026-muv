@@ -44,6 +44,9 @@ python3 tools/replay_control.py --offset 0.2 --heading 20
 # (persepsi -> Stanley -> PWM per roda, tanpa Jetson/motor):
 ../../.venv/bin/python tools/mcu_bench.py --video ../../recordings/capture_001.mp4
 
+# bench dashboard: kamera CSI/video ditukar dari browser (tanpa motor):
+../../.venv/bin/python main.py --bench --video ../../recordings/capture_001.mp4
+
 # boot kering: BOOT -> READY -> STOPPED, menulis log, roda tidak bergerak
 cp robot.example.json robot.json   # lalu sesuaikan
 python3 main.py --config robot.json
@@ -69,6 +72,7 @@ serta test suite repo ini.
 | `--self-check` | Verifikasi fondasi: config, state machine, protokol, MCU stub | Tidak ada | Tidak |
 | `--stream-only` | Bench persepsi: kamera CSI + MJPEG (`:8080/stream`) + tracker lajur | Kamera | Tidak |
 | `--closed-loop` | Loop kontrol: kamera → tracker → Stanley → MCU. `dry_run` default true = log saja, serial tidak disentuh | Kamera (+ MCU kalau live) | Hanya kalau `dry_run=false` |
+| `--bench` | **Dashboard + kontrol sumber:** kamera CSI/file video bisa ditukar dari browser (toggle + pemilih video) saat runtime, MJPEG + tracker lajur. TANPA serial, TANPA motor. Flag ini sudah menyertakan dashboard — `--bench` bareng `--dashboard` ditolak | Kamera (CSI atau file video) | Tidak |
 | `--dashboard` | Bench/pit: serve dashboard run (`:18765`) selama mode berjalan. Butuh `--stream-only`/`--closed-loop` | Tidak | Tidak |
 | `--dashboard-port` | Port dashboard (default 18765) | — | — |
 | `--config PATH` | Tunjuk file config (default `robot.json`) | — | — |
@@ -86,6 +90,60 @@ Tanpa flag → `boot_dry` (heartbeat nol, langsung exit; sisa Fase 0).
 # terangkat + E-stop fisik + arus terbatas:
 /usr/bin/python3 -u main.py --closed-loop --config robot.json
 ```
+
+## Bench dashboard: tukar sumber kamera dari browser (`--bench`)
+
+Mode bench untuk satu proses yang menjalankan **dashboard + kontrol
+sumber kamera**: toggle kamera CSI ↔ file video + pemilih video,
+ditukar **saat runtime tanpa restart proses**. Tidak ada serial dan
+tidak ada motor di jalur ini — roda fisik tidak bisa menyala dari sini,
+bukan karena ditambahi penjaga, tapi karena jalur ke motor tidak ada.
+
+```sh
+# dari program/robot
+# Kamera CSI (butuh /usr/bin/python3 di Jetson — cv2 + GStreamer):
+/usr/bin/python3 -u main.py --bench
+
+# Sumber awal = file video (jalan juga di laptop dengan .venv):
+../../.venv/bin/python main.py --bench --video ../../recordings/capture_001.mp4
+
+# Direktori daftar video buat pemilih di dashboard (default ../../recordings):
+../../.venv/bin/python main.py --bench --videos ../../recordings
+
+# Berhenti otomatis setelah 60 detik (default: jalan sampai Ctrl+C):
+../../.venv/bin/python main.py --bench --bench-duration 60
+```
+
+Yang jalan di satu proses:
+
+- **Loop kamera** di thread sendiri — tiap frame dipublish ke MJPEG
+  (`http://127.0.0.1:8080/stream`) supaya terlihat di browser, dan
+  dilewatkan ke `LaneTracker` supaya angka lajur hidup di dashboard.
+- **Dashboard** di `http://127.0.0.1:18765/` dengan panel kontrol
+  sumber: tombol **Kamera CSI** / **Video**, pemilih file video dari
+  direktori daftar, readout FPS/frame/error lateral/error heading/
+  confidence/stasiun, dan status sumber (termasuk alasan gagal).
+- **Tukar sumber = POST `/api/source`** — kamera lama dilepas, kamera
+  baru dibuka, thread kamera dan server TIDAK restart. Nama file
+  divalidasi ketat (tanpa separator path, ekstensi dikenal, harus
+  langsung di dalam direktori daftar — symlink ke luar ditolak), jadi
+  `../` tidak bisa dipakai untuk keluar dari direktori.
+
+Batasan yang ditegakkan:
+
+- `dry_run` **dipaksa true** di `run_bench()` — config live tidak bisa
+  bocor ke mode ini, dan `McuLink` tidak pernah dibuat.
+- `--bench` sudah menjalankan dashboard sendiri; `--dashboard` bareng
+  `--bench` = error (redundan, dan HTTP wajib mati saat lomba).
+- `--bench-duration` harus positif; `--video` harus file yang ada.
+- Tombol CSI dimatikan di UI dengan alasannya kalau build cv2 tidak
+  punya backend GStreamer — bukan gagal saat ditekan. (Catatan: wheel
+  `opencv-python` di `.venv` justru MELAPORKAN GStreamer YES, tapi tanpa
+  kamera CSI terpasang `read()` gagal "No cameras available" — kamera
+  asli tetap hanya di Jetson dengan `/usr/bin/python3`.)
+
+**Aturan lomba: matikan proses ini (dan semua HTTP) sebelum setiap
+percobaan** — tidak ada komunikasi apa pun dengan robot selama run.
 
 ## Bench tanpa hardware: video sebagai kamera
 
@@ -123,7 +181,13 @@ Video habis = `EndOfVideo` (bukan error): `--closed-loop` dan
 `--stream-only` berhenti bersih, `mcu_bench.py` memutar ulang file
 kecuali `--no-loop`. Jadi `--stream-only` juga bisa dipakai dengan
 video: set `camera_pipeline` di config ke path file, jalankan seperti
-biasanya.
+biasanya. Di mode `--bench` file video justru diputar **ulang** terus
+(`video_loop` default true di `CameraSource`) supaya panel dashboard
+tidak mati sendiri saat file habis — status `ended` tetap dilaporkan.
+
+Kalau yang mau dilihat cuma persepsi + tracker di video (tanpa MCU
+virtual, tanpa motor sama sekali), pakai `main.py --bench` — lihat
+bagian bench dashboard di atas.
 
 Output bench: `runs/run-*/` (telemetry.csv + events.jsonl, bisa dibuka
 `dashboard.py --runs runs`) + `bench_summary.json` (statistik motor
@@ -153,6 +217,9 @@ di browser:
 /usr/bin/python3 -u main.py --closed-loop --dashboard
 ```
 
+Mode `--bench` menjalankan dashboard yang sama **plus** kontrol sumber
+kamera — lihat bagian di atas.
+
 - Default **OFF** — saat lomba semua HTTP wajib mati; flag eksplisit
   supaya tidak pernah nyala tidak sengaja.
 - Butuh `--stream-only` atau `--closed-loop` (dashboard membaca log
@@ -172,8 +239,9 @@ di browser:
 | `mizuro/types.py` | `Command` (muatan serial), `Observation` (hasil persepsi), `McuStatus` (status MCU) |
 | `mizuro/telemetry.py` | `runs/run-*/telemetry.csv` + `events.jsonl` |
 | `mizuro/mcu.py` | tautan serial; `send()` = heartbeat; kirim mode saat port dibuka; `read_status()` non-blocking; gagal tulis → `alive=False` |
-| `mizuro/camera.py` | CSI/GStreamer (gagal keras kalau cv2 tanpa GStreamer) + file video buat bench (tanpa GStreamer, `EndOfVideo` kalau habis) |
+| `mizuro/camera.py` | CSI/GStreamer (gagal keras kalau cv2 tanpa GStreamer) + file video buat bench (tanpa GStreamer, `EndOfVideo` kalau habis); `CameraSource` = sumber yang bisa ditukar saat runtime |
 | `mizuro/stream.py` | MJPEG bench-only: FrameHub encode-once + server HTTP |
+| `mizuro/bench_server.py` | `BenchControl` — loop kamera + tracker di thread dengan sumber yang bisa ditukar (`--bench`); tidak pernah menyentuh serial/motor |
 | `mizuro/perception/calibration.py` | piksel ↔ tanah (konvensi ray arena-3d), homography |
 | `mizuro/perception/geometry.py` | fit kuadratik robust + bobot, state lajur, confidence |
 | `mizuro/perception/classical.py` | `LaneTracker`: Otsu → stasiun → fit, dua pass |
@@ -257,6 +325,21 @@ Keamanan: hanya nama event yang dikirim (detail event bisa berisi
 config — tidak pernah diekspos); nama run dari query divalidasi
 regex (path traversal ditolak, HTTP 400); CSP + `no-store` +
 `nosniff` di setiap respons.
+
+Kalau server distart oleh `main.py --bench`, dashboard yang sama
+menambah **tiga** hal (tanpa `control`, server tetap read-only dan
+endpoint kontrol tidak ada):
+
+| Endpoint | Method | Kegunaan |
+|---|---|---|
+| `/api/sources` | GET | daftar sumber: status CSI (+ alasan kalau cv2 tanpa GStreamer) + video di direktori daftar |
+| `/api/source` | POST | tukar sumber: `{"source": "csi"}` atau `{"source": "video", "name": "laps.mp4"}` |
+| `/api/status` | GET | key tambahan `bench` = status kamera hidup (fps, frame, error lajur, confidence) |
+
+Body POST dibatasi 4 KB dan nama video divalidasi ketat (tanpa
+separator path, ekstensi dikenal, harus langsung di direktori daftar).
+Payload tidak sah → HTTP 400; sumber gagal dibuka → HTTP 500 dengan
+sumber lama tetap aktif.
 
 **Aturan lomba: matikan dashboard sebelum setiap percobaan** —
 tidak ada komunikasi apa pun dengan robot selama run.

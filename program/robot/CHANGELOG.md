@@ -5,6 +5,89 @@ Riwayat paket runtime robot (`program/robot/`). Scaffold lama
 build baru dimulai. Format: satu entri per commit besar, plus catatan
 verifikasi dan yang BELUM diuji.
 
+## 2026-11-07 — `main.py --bench`: dashboard dengan kontrol sumber kamera
+
+Mode bench baru: satu proses menjalankan **dashboard + kontrol sumber
+kamera** — toggle kamera CSI ↔ file video + pemilih video, ditukar saat
+runtime **tanpa restart proses**. Tidak ada serial dan tidak ada motor
+di jalur ini.
+
+- **`mizuro/camera.py` — `CameraSource`**: pembungkus `Camera` yang
+  sumbernya bisa ditukar (`select(pipeline)`): kamera lama di-`release`,
+  kamera baru dibuka, `switches` dihitung, `describe()` melaporkan
+  `source` (`csi`/`video`/`none`), `pipeline`, `is_file`. Sumber awal
+  boleh gagal — error masuk status, thread kamera tetap hidup supaya
+  operator bisa memilih video dari dashboard. `video_loop` default true
+  (file diputar ulang; `--bench` tidak mati sendiri saat video habis).
+- **`mizuro/bench_server.py` — `BenchControl`** (baru): loop kamera di
+  thread sendiri — tiap frame dipublish ke MJPEG (`mizuro/stream.py`)
+  dan dilewatkan ke `LaneTracker`, hasilnya masuk status hidup
+  (`frames`, `fps`, `lane_error_m`, `heading_error_rad`, `confidence`,
+  `stations`, `polarity`, `error`, `ended`, `tracker_error`).
+  - `sources()`: daftar buat pemilih dashboard — CSI dilaporkan
+    `available` hanya kalau build cv2 punya backend GStreamer (kalau
+    tidak, UI mematikan tombol CSI **dengan alasannya**, bukan gagal
+    saat ditekan), plus video di direktori daftar.
+  - `select(payload)`: `{"source": "csi"}` atau
+    `{"source": "video", "name": "..."}`. `ValueError` = permintaan
+    tidak sah (HTTP 400), `RuntimeError` = sumber gagal dibuka, sumber
+    lama tetap aktif (HTTP 500).
+  - Validasi nama video ketat (`_resolve_video`): tanpa separator path,
+    ekstensi dikenal (`VIDEO_SUFFIXES`), panjang dibatasi, dan setelah
+    `resolve()` induknya HARUS direktori daftar — `../` dan symlink ke
+    luar ditolak. Path absolut dari body tidak pernah diterima.
+  - Satu frame buruk tidak membunuh loop: `EndOfVideo` → status
+    `ended`, error lain → status `error` + retry setelah 0.25 s
+    (tidak spin 100% CPU). Tracker rusak ≠ kamera rusak: error tracker
+    masuk field terpisah, loop kamera lanjut.
+  - **KESELAMATAN**: modul ini tidak pernah membuat `McuLink` — roda
+    fisik tidak bisa menyala dari sini karena jalur ke motor tidak ada.
+- **`dashboard.py`**: `make_server(..., control=None)` — dengan
+  `control`, server menambah `GET /api/sources`, `POST /api/source`
+  (body dibatasi `MAX_BODY_BYTES` = 4 KB) dan key `bench` di
+  `/api/status`; halaman ditandai token `__BENCH__`. Tanpa `control`
+  (mis. `dashboard.py` jalan sendiri) endpoint kontrol **tidak ada** —
+  server tetap read-only seperti sebelumnya.
+- **`dashboard.html`**: panel kontrol sumber (toggle CSI/Video +
+  pemilih file + readout fps/frame/error/confidence/stasiun + status
+  sumber), hanya muncul kalau server mode bench. Panel tetap hidup
+  walau belum ada log run sama sekali (bench video saja tidak menulis
+  telemetry); kalau server di-restart tanpa `--bench`, panel menyembunyikan
+  diri dengan pesan, bukan error mentah.
+- **`main.py`**: flag `--bench` (+ `--video`, `--videos`, `--bench-duration`)
+  → `run_bench()`. `dry_run` **dipaksa true di dalam `run_bench()`**
+  (bukan hanya di `main()`) supaya config live tidak bocor lewat
+  pemanggil lain. `--bench` sudah menjalankan dashboard sendiri, jadi
+  `--bench` bareng `--dashboard` = SystemExit (redundan). Validasi lain:
+  `--bench-duration` harus positif, `--video` harus file yang ada.
+- **Tes** (+5 dari baseline 424 → **429 lolos**):
+  - `tests/test_bench_server.py` (baru, 28 tes): siklus hidup
+    start/stop, tukar sumber CSI↔video, video habis (`ended`),
+    kamera gagal (`error` + retry), tracker error tidak membunuh loop,
+    fps bergerak, validasi nama video (separator, ekstensi, symlink,
+    path absolut, nama kosong/panjang), `sources()` dengan/s tanpa
+    direktori, `select` payload bukan dict.
+  - `tests/test_camera.py` (+tes `CameraSource`): select, describe,
+    switches, sumber gagal, `video_loop`.
+  - `tests/test_dashboard.py` (+12): endpoint kontrol ada hanya dengan
+    `control`, `bench` di `/api/status`, POST tukar sumber, 400 payload
+    tidak sah, 400 body kebesaran, token `__BENCH__` bersih, halaman
+    tanpa panel kalau bukan mode bench.
+  - `tests/test_main.py` (+5): `--bench` + `--dashboard` ditolak,
+    `--bench-duration` non-positif ditolak, `--video` tidak ada ditolak,
+    `run_bench` end-to-end (server siap, frame mengalir, tukar sumber
+    tanpa restart proses, nama ngawur 400 + sumber lama tetap, semua
+    kamera dilepas saat berhenti), `run_bench` memaksa `dry_run`.
+- **Verifikasi**: `pytest tests/ -q` = 429 lolos;
+  `main.py --self-check`, `dashboard.py --self-check`, dan `py_compile`
+  lolos.
+- **README.md**: bagian baru "Bench dashboard: tukar sumber kamera dari
+  browser (`--bench`)", baris flag `--bench`, tabel endpoint kontrol,
+  dan `mizuro/bench_server.py` di daftar isi paket.
+- **Belum diuji**: panel kontrol di browser sungguhan (butuh buka
+  halaman); tukar ke kamera CSI asli di Jetson (butuh hardware);
+  `--bench` dengan `--videos` ke direktori berisi banyak file besar.
+
 ## 2026-11-06 (tambahan) — video-file sebagai kamera + bench tanpa hardware
 
 Alat bench baru untuk menguji loop penuh (persepsi → Stanley → MCU)

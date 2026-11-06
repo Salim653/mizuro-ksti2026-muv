@@ -11,13 +11,17 @@ Flag `--dashboard` (bench/pit) menyalakan server dashboard run di thread
 terpisah selama mode berjalan — membaca log yang SEDANG ditulis proses
 ini, jadi telemetry terlihat hidup di browser. Default OFF: saat lomba
 semua HTTP wajib mati.
+
+Flag `--bench` (bench/pit) menjalankan dashboard dengan KONTROL SUMBER
+KAMERA: toggle kamera CSI / file video + pemilih video, ditukar saat
+runtime tanpa restart proses. Tidak ada serial atau motor di jalur ini.
 """
 from __future__ import annotations
 
 import argparse
 import math
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from mizuro.config import Config
@@ -170,7 +174,8 @@ def build_detector(config: Config):
     raise ValueError(f"checkpoint_mode tidak dikenal: {mode}")
 
 
-def serve_dashboard(config: Config, port: int, feed_url: str = ""):
+def serve_dashboard(config: Config, port: int, feed_url: str = "",
+                    control=None):
     """Bench/pit: serve dashboard run di thread daemon.
 
     Dashboard membaca log run yang SEDANG ditulis proses ini
@@ -179,6 +184,10 @@ def serve_dashboard(config: Config, port: int, feed_url: str = ""):
 
     `feed_url` (opsional) = URL MJPEG mode ini; di-inject ke halaman
     sehingga panel kamera langsung terisi.
+
+    `control` (opsional) = BenchControl; menambah endpoint kontrol
+    sumber kamera (GET /api/sources, POST /api/source) + status kamera
+    hidup di /api/status. Hanya dipakai mode `--bench`.
 
     WAJIB mati saat percobaan lomba — aturan melarang komunikasi apa
     pun dengan robot selama run. Bind mengikuti `stream_host`
@@ -190,11 +199,14 @@ def serve_dashboard(config: Config, port: int, feed_url: str = ""):
 
     host = config.stream_host or "127.0.0.1"
     server = make_server(host, port, Path(config.output_dir),
-                         feed_url=feed_url)
+                         feed_url=feed_url, control=control)
     threading.Thread(target=server.serve_forever, name="dashboard",
                      daemon=True).start()
     print(f"dashboard : http://{host}:{server.server_port}/ "
           f"(log: {config.output_dir})")
+    if control is not None:
+        print("kontrol   : toggle kamera/video + pemilih video di halaman "
+              "dashboard (serial/motor tidak pernah disentuh)")
     print("PERINGATAN: matikan dashboard + stream sebelum percobaan lomba")
     return server
 
@@ -302,6 +314,79 @@ def stream_only(config: Config, dashboard_port: int | None = None) -> None:
                 dash.server_close()
 
 
+def run_bench(config: Config, dashboard_port: int, videos_dir: Path,
+              video: str = "", duration_s: float | None = None,
+              *, opener=None) -> None:
+    """Bench dashboard: kamera CSI/video bisa ditukar dari browser.
+
+    Alur: jalankan dashboard -> toggle kamera/video -> pilih video.
+    Satu proses menjalankan loop kamera (thread), MJPEG buat mata,
+    LaneTracker buat angka, dan endpoint kontrol sumber di halaman
+    dashboard yang sama. Menukar sumber TIDAK restart proses.
+
+    WAJIB `/usr/bin/python3` di Jetson kalau sumbernya kamera CSI
+    (cv2 butuh backend GStreamer); sumber file video jalan dengan cv2
+    pip `.venv` di laptop.
+
+    Ctrl+C untuk berhenti (atau `--bench-duration` buat batas waktu).
+    """
+    # dry_run dipaksa DI SINI juga, bukan hanya di main(): mode ini tidak
+    # punya jalur ke MCU sama sekali, dan config live tidak boleh bocor
+    # lewat pemanggil lain (tes, skrip tim).
+    config = replace(config, dry_run=True)
+
+    from mizuro.bench_server import BenchControl
+    from mizuro.perception.calibration import CameraCalibration
+    from mizuro.perception.classical import LaneTracker
+    from mizuro.stream import FrameHub, MjpegServer
+
+    # Kalibrasi: sama seperti --stream-only (homography terukur kalau
+    # di-set, default hFOV kalau tidak).
+    if config.homography_path:
+        calib = CameraCalibration.from_json(config.homography_path)
+        undistort = ((calib.camera_matrix(), calib.dist)
+                     if calib.dist else None)
+        print(f"kalibrasi: {config.homography_path} "
+              f"(fx={calib.fx:.1f} hFOV={calib.hfov_deg():.1f} deg"
+              f"{', undistort ON' if undistort else ''})")
+    else:
+        calib = CameraCalibration.from_config(config)
+        undistort = None
+        print("kalibrasi: default (hFOV 62 deg) — set homography_path "
+              "di robot.json buat intrinsik terukur")
+    tracker = LaneTracker(polarity=config.lane_polarity,
+                          roi_top=config.lane_roi_top,
+                          min_confidence=config.lane_min_confidence)
+    hub = FrameHub(quality=config.stream_quality, fps=config.stream_fps,
+                   width=config.stream_width, height=config.stream_height)
+
+    control = BenchControl(config, videos_dir=videos_dir, calib=calib,
+                           tracker=tracker, hub=hub, opener=opener,
+                           initial=video or config.camera_pipeline)
+    with control, MjpegServer.from_config(config, hub) as server:
+        dash = serve_dashboard(config, dashboard_port, feed_url=server.url,
+                               control=control)
+        print(f"stream : {server.url}")
+        print(f"video  : {videos_dir} "
+              f"({len(control.sources()['videos'])} file terdaftar)")
+        print("bench  : TANPA serial, TANPA motor — toggle sumber hanya "
+              "menukar kamera")
+        if duration_s:
+            print(f"batas  : {duration_s:.0f} s lalu berhenti")
+        print("Ctrl+C untuk berhenti")
+        try:
+            control.wait(duration_s)
+        except KeyboardInterrupt:
+            print("\nbench dihentikan operator")
+        finally:
+            dash.shutdown()
+            dash.server_close()
+        status = control.status()
+        print(f"\nSelesai: {status.get('frames', 0)} frame, "
+              f"{status.get('switches', 0)}x tukar sumber, "
+              f"sumber terakhir {status.get('source', 'none')}")
+
+
 def run_closed(config: Config, dashboard_port: int | None = None) -> None:
     """Fase 4: loop kontrol tertutup — persepsi -> Stanley -> MCU.
 
@@ -387,6 +472,21 @@ def main() -> None:
                         help="Fase 4: persepsi -> Stanley -> MCU. dry_run "
                              "default true (tanpa serial). Motor hanya "
                              "nyala kalau dry_run=false + roda terangkat")
+    parser.add_argument("--bench", action="store_true",
+                        help="bench dashboard: kamera CSI/video bisa ditukar "
+                             "dari browser (toggle + pemilih video), MJPEG + "
+                             "tracker lajur. TANPA serial, TANPA motor")
+    parser.add_argument("--video", default="",
+                        help="sumber kamera awal untuk --bench: path file "
+                             "video (default: camera_pipeline di config, "
+                             "kosong = kamera CSI)")
+    parser.add_argument("--videos", type=Path,
+                        default=Path("../../recordings"),
+                        help="direktori daftar video buat pemilih dashboard "
+                             "(default: ../../recordings relatif program/robot)")
+    parser.add_argument("--bench-duration", type=float, default=None,
+                        help="bench berhenti otomatis setelah N detik "
+                             "(default: jalan sampai Ctrl+C)")
     parser.add_argument("--dashboard", action="store_true",
                         help="bench/pit: serve dashboard run selama mode "
                              "berjalan (butuh --stream-only atau "
@@ -395,6 +495,10 @@ def main() -> None:
                         help="port dashboard (default: 18765)")
     args = parser.parse_args()
 
+    if args.bench and args.dashboard:
+        raise SystemExit(
+            "--bench sudah menjalankan dashboard sendiri; --dashboard "
+            "tidak perlu (dan HTTP wajib mati saat percobaan lomba)")
     if args.dashboard and not (args.stream_only or args.closed_loop):
         raise SystemExit(
             "--dashboard butuh --stream-only atau --closed-loop; "
@@ -402,18 +506,29 @@ def main() -> None:
     if not 1 <= args.dashboard_port <= 65535:
         raise SystemExit(
             f"--dashboard-port harus dalam [1, 65535]: {args.dashboard_port}")
+    if args.bench_duration is not None and args.bench_duration <= 0:
+        raise SystemExit("--bench-duration harus positif")
+    if args.video and not Path(args.video).is_file():
+        raise SystemExit(f"video tidak ada: {args.video}")
 
     if args.self_check:
         self_check()
         return
     if args.config.is_file():
         config = Config.load(args.config)
-    elif args.stream_only or args.closed_loop:
+    elif args.stream_only or args.closed_loop or args.bench:
         config = Config()   # default; mount disesuaikan di robot.json
     else:
         raise SystemExit(
             f"config tidak ditemukan: {args.config}; "
             f"salin dari robot.example.json dan sesuaikan")
+    if args.bench:
+        # dry_run dipaksa: bench tidak punya jalur ke MCU sama sekali,
+        # dan config live tidak boleh bocor ke mode ini.
+        run_bench(replace(config, dry_run=True), args.dashboard_port,
+                  args.videos, video=args.video,
+                  duration_s=args.bench_duration)
+        return
     if args.stream_only:
         stream_only(config,
                     args.dashboard_port if args.dashboard else None)
